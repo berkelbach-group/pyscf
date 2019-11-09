@@ -33,10 +33,16 @@ einsum = lib.einsum
 
 ### Section (a)
 
-def make_tau(cc, t2, t1, t1p, kconserv, fac=1., out=None):
+def make_tau(cc, t2, t1, t1p, kconserv, fac=1., out=None, cc2=False):
     nkpts, nocc, nvir = t1.shape
     tau1 = numpy.ndarray(t2.shape, dtype=t2.dtype, buffer=out)
-    tau1[:] = t2
+    # tau1 = numpy.zeros_like(t2)
+
+    if (not cc2):
+        tau1[:] = t2
+    else:
+        tau1[:] = 0.0
+
     for ki in range(nkpts):
         for ka in range(nkpts):
             for kj in range(nkpts):
@@ -53,13 +59,13 @@ def make_tau(cc, t2, t1, t1p, kconserv, fac=1., out=None):
                     tau1[ki,kj,ka] += fac*0.5*tmp
     return tau1
 
-def cc_Fvv(cc,t1,t2,eris,kconserv):
+def cc_Fvv(cc,t1,t2,eris,kconserv, cc2 = False):
     nkpts, nocc, nvir = t1.shape
     fov = eris.fock[:,:nocc,nocc:].copy()
     fvv = eris.fock[:,nocc:,nocc:].copy()
     # <o(k1)v(k2)||v(k3)v(k4)> = <v(k2)o(k1)||v(k4)v(k3)> = -<v(k2)o(k1)||v(k3)v(k4)>
     eris_vovv = -eris.ovvv.transpose(1,0,2,4,3,5,6)
-    tau_tilde = make_tau(cc,t2,t1,t1,kconserv,fac=0.5)
+    tau_tilde = make_tau(cc,t2,t1,t1,kconserv,fac=0.5, cc2=cc2)
     Fae = numpy.zeros(fvv.shape, t1.dtype)
     #kconserv = kpts_helper.get_kconserv(cc._scf.cell, cc.kpts)
     for ka in range(nkpts):
@@ -73,11 +79,11 @@ def cc_Fvv(cc,t1,t2,eris,kconserv):
                                        eris.oovv[km,kn,ka])
     return Fae
 
-def cc_Foo(cc,t1,t2,eris,kconserv):
+def cc_Foo(cc,t1,t2,eris,kconserv, cc2=False):
     nkpts, nocc, nvir = t1.shape
     fov = eris.fock[:,:nocc,nocc:].copy()
     foo = eris.fock[:,:nocc,:nocc].copy()
-    tau_tilde = make_tau(cc,t2,t1,t1,kconserv,fac=0.5)
+    tau_tilde = make_tau(cc,t2,t1,t1,kconserv,fac=0.5, cc2=cc2)
     Fmi = numpy.zeros(foo.shape, t1.dtype)
     for km in range(nkpts):
         Fmi[km] += foo[km]
@@ -100,9 +106,9 @@ def cc_Fov(cc,t1,t2,eris,kconserv):
             Fme[km] -= einsum('nf,mnfe->me',t1[kf],eris.oovv[km,kn,kf])
     return Fme
 
-def cc_Woooo(cc,t1,t2,eris,kconserv):
+def cc_Woooo(cc,t1,t2,eris,kconserv, cc2 = False):
     nkpts, nocc, nvir = t1.shape
-    tau = make_tau(cc,t2,t1,t1,kconserv)
+    tau = make_tau(cc,t2,t1,t1,kconserv, cc2=cc2)
     Wmnij = eris.oooo.copy()
     for km in range(nkpts):
         for kn in range(nkpts):
@@ -123,10 +129,10 @@ def cc_Woooo(cc,t1,t2,eris,kconserv):
                 Wmnij[km,kn,ki] += tmp[ki,kj]
     return Wmnij
 
-def cc_Wvvvv(cc,t1,t2,eris,kconserv):
+def cc_Wvvvv(cc,t1,t2,eris,kconserv, cc2= False):
     nkpts, nocc, nvir = t1.shape
     eris_vovv = - eris.ovvv.transpose(1,0,2,4,3,5,6)
-    tau = make_tau(cc,t2,t1,t1,kconserv)
+    tau = make_tau(cc,t2,t1,t1,kconserv, cc2= cc2)
     Wabef = eris.vvvv.copy()
     for ka in range(nkpts):
         for kb in range(nkpts):
@@ -147,7 +153,7 @@ def cc_Wvvvv(cc,t1,t2,eris,kconserv):
 
     return Wabef
 
-def cc_Wovvo(cc,t1,t2,eris,kconserv):
+def cc_Wovvo(cc,t1,t2,eris,kconserv, cc2 = False):
     nkpts, nocc, nvir = t1.shape
     eris_ovvo = numpy.zeros(shape=(nkpts,nkpts,nkpts,nocc,nvir,nvir,nocc),dtype=t2.dtype)
     eris_oovo = numpy.zeros(shape=(nkpts,nkpts,nkpts,nocc,nocc,nvir,nocc),dtype=t2.dtype)
@@ -169,14 +175,15 @@ def cc_Wovvo(cc,t1,t2,eris,kconserv):
                 Wmbej[km,kb,ke] += -einsum('nb,mnej->mbej',t1[kb,:,:],eris_oovo[km,kb,ke])
                 for kn in range(nkpts):
                     kf = kconserv[km,ke,kn]
-                    Wmbej[km,kb,ke] += -0.5*einsum('jnfb,mnef->mbej',t2[kj,kn,kf],
-                                                   eris.oovv[km,kn,ke])
+                    if (not cc2):
+                        Wmbej[km,kb,ke] += -0.5*einsum('jnfb,mnef->mbej',t2[kj,kn,kf],
+                                                       eris.oovv[km,kn,ke])
                     if kn == kb and kf == kj:
                         Wmbej[km,kb,ke] += -einsum('jf,nb,mnef->mbej',t1[kj],t1[kn],
                                                    eris.oovv[km,kn,ke])
     return Wmbej
 
-def cc_Wovvo_jk(cc, t1, t2, eris, kconserv):
+def cc_Wovvo_jk(cc, t1, t2, eris, kconserv, cc2 = False):
     nkpts, nocc, nvir = t1.shape
     eris_ovvo = numpy.zeros(shape=(nkpts,nkpts,nkpts,nocc,nvir,nvir,nocc),dtype=t2.dtype)
     eris_oovo = numpy.zeros(shape=(nkpts,nkpts,nkpts,nocc,nocc,nvir,nocc),dtype=t2.dtype)
@@ -189,8 +196,9 @@ def cc_Wovvo_jk(cc, t1, t2, eris, kconserv):
                 Wmbej[km,kb,ke] += -einsum('nb,mnej->mbej',t1[kb,:,:],eris.oovo[km,kb,ke])
                 for kn in range(nkpts):
                     kf = kconserv[km,ke,kn]
-                    Wmbej[km,kb,ke] += -0.5*einsum('jnfb,mnef->mbej',t2[kj,kn,kf],
-                                                   eris.oovv[km,kn,ke])
+                    if (not cc2):
+                        Wmbej[km,kb,ke] += -0.5*einsum('jnfb,mnef->mbej',t2[kj,kn,kf],
+                                                       eris.oovv[km,kn,ke])
                     if kn == kb and kf == kj:
                         Wmbej[km,kb,ke] += -einsum('jf,nb,mnef->mbej',t1[kj],t1[kn],
                                                    eris.oovv[km,kn,ke])
@@ -219,9 +227,9 @@ def Fov(cc,t1,t2,eris,kconserv):
     Fme = cc_Fov(cc,t1,t2,eris,kconserv)
     return Fme
 
-def Woooo(cc,t1,t2,eris,kconserv):
+def Woooo(cc,t1,t2,eris,kconserv, cc2):
     nkpts, nocc, nvir = t1.shape
-    tau = make_tau(cc,t2,t1,t1,kconserv)
+    tau = make_tau(cc,t2,t1,t1,kconserv, cc2=cc2)
     Wmnij = cc_Woooo(cc,t1,t2,eris,kconserv)
     for km in range(nkpts):
         for kn in range(nkpts):

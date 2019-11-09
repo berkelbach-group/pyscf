@@ -65,7 +65,7 @@ def energy(cc, t1, t2, eris):
     return e.real
 
 
-def update_amps(cc, t1, t2, eris):
+def update_amps(cc, t1, t2, eris, do_cc2 = True):
     time0 = time.clock(), time.time()
     log = logger.Logger(cc.stdout, cc.verbose)
     nkpts, nocc, nvir = t1.shape
@@ -129,29 +129,57 @@ def update_amps(cc, t1, t2, eris):
                 t1new[ka] += -0.5 * einsum('imef,maef->ia', t2[ki, km, ke], eris.ovvv[km, ka, ke])
                 t1new[ka] += -0.5 * einsum('mnae,nmei->ia', t2[km, kn, ka], eris_oovo[kn, km, ke])
 
+    if (do_cc2):
+        Fvv = imdk.cc_Fvv(cc, t1, t2, eris, kconserv, cc2=do_cc2)
+        Foo = imdk.cc_Foo(cc, t1, t2, eris, kconserv, cc2=do_cc2)
+        Fov = imdk.cc_Fov(cc, t1, t2, eris, kconserv)
+        tau = imdk.make_tau(cc, t2, t1, t1, kconserv, cc2=do_cc2)
+        Woooo = imdk.cc_Woooo(cc, t1, t2, eris, kconserv, cc2 = do_cc2)
+        Wvvvv = imdk.cc_Wvvvv(cc, t1, t2, eris, kconserv, cc2 = do_cc2)
+        Wovvo = imdk.cc_Wovvo(cc, t1, t2, eris, kconserv, cc2 = do_cc2)
+        
+        for k in range(nkpts):
+            Foo[k][numpy.diag_indices(nocc)] -= mo_e_o[k]
+            Fvv[k][numpy.diag_indices(nvir)] -= mo_e_v[k]
+    
     # T2 equation
     t2new = numpy.array(eris.oovv).conj()
     for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
         # Chemist's notation for momentum conserving t2(ki,kj,ka,kb)
         kb = kconserv[ki, ka, kj]
+        
+        if (do_cc2):
+            tmp = einsum('ijae,be->ijab', t2[ki, kj, ka], Fvv[kb])
+            t2new[ki, kj, ka] += tmp
+        else:
+            Ftmp = Fvv[kb] - 0.5 * einsum('mb,me->be', t1[kb], Fov[kb])
+            tmp = einsum('ijae,be->ijab', t2[ki, kj, ka], Ftmp)
+            t2new[ki, kj, ka] += tmp
 
-        Ftmp = Fvv[kb] - 0.5 * einsum('mb,me->be', t1[kb], Fov[kb])
-        tmp = einsum('ijae,be->ijab', t2[ki, kj, ka], Ftmp)
-        t2new[ki, kj, ka] += tmp
+        if (do_cc2):
+            tmp = einsum('ijbe,ae->ijab', t2[ki, kj, kb], Fvv[ka])
+            t2new[ki, kj, ka] -= tmp
+        else:
+            Ftmp = Fvv[ka] - 0.5 * einsum('ma,me->ae', t1[ka], Fov[ka])
+            tmp = einsum('ijbe,ae->ijab', t2[ki, kj, kb], Ftmp)
+            t2new[ki, kj, ka] -= tmp
 
-        #t2new[ki,kj,kb] -= tmp.transpose(0,1,3,2)
-        Ftmp = Fvv[ka] - 0.5 * einsum('ma,me->ae', t1[ka], Fov[ka])
-        tmp = einsum('ijbe,ae->ijab', t2[ki, kj, kb], Ftmp)
-        t2new[ki, kj, ka] -= tmp
+        if (do_cc2):
+            Ftmp = Foo[kj]
+            tmp = einsum('imab,mj->ijab', t2[ki, kj, ka], Ftmp)
+            t2new[ki, kj, ka] -= tmp
+        else:
+            Ftmp = Foo[kj] + 0.5 * einsum('je,me->mj', t1[kj], Fov[kj])
+            tmp = einsum('imab,mj->ijab', t2[ki, kj, ka], Ftmp)
+            t2new[ki, kj, ka] -= tmp
 
-        Ftmp = Foo[kj] + 0.5 * einsum('je,me->mj', t1[kj], Fov[kj])
-        tmp = einsum('imab,mj->ijab', t2[ki, kj, ka], Ftmp)
-        t2new[ki, kj, ka] -= tmp
-
-        #t2new[kj,ki,ka] += tmp.transpose(1,0,2,3)
-        Ftmp = Foo[ki] + 0.5 * einsum('ie,me->mi', t1[ki], Fov[ki])
-        tmp = einsum('jmab,mi->ijab', t2[kj, ki, ka], Ftmp)
-        t2new[ki, kj, ka] += tmp
+        if (do_cc2):
+            tmp = einsum('jmab,mi->ijab', t2[kj, ki, ka], Foo[ki])
+            t2new[ki, kj, ka] += tmp
+        else:
+            Ftmp = Foo[ki] + 0.5 * einsum('ie,me->mi', t1[ki], Fov[ki])
+            tmp = einsum('jmab,mi->ijab', t2[kj, ki, ka], Ftmp)
+            t2new[ki, kj, ka] += tmp
 
         for km in range(nkpts):
             # Wminj
@@ -165,15 +193,21 @@ def update_amps(cc, t1, t2, eris):
             # Wmbej
             #     - km - kb + ke + kj = 0
             #  => ke = km - kj + kb
-            ke = kconserv[km, kj, kb]
-            tmp = einsum('imae,mbej->ijab', t2[ki, km, ka], Wovvo[km, kb, ke])
+            if (not do_cc2):
+                ke = kconserv[km, kj, kb]
+                tmp = einsum('imae,mbej->ijab', t2[ki, km, ka], Wovvo[km, kb, ke])
             #     - km - kb + ke + kj = 0
             # =>  ke = km - kj + kb
             #
             # t[i,e] => ki = ke
             # t[m,a] => km = ka
-            if km == ka and ke == ki:
-                tmp -= einsum('ie,ma,mbej->ijab', t1[ki], t1[km], eris_ovvo[km, kb, ke])
+            if (not do_cc2):
+                if km == ka and ke == ki:
+                    tmp -= einsum('ie,ma,mbej->ijab', t1[ki], t1[km], eris_ovvo[km, kb, ke])
+            else:
+                if km == ka and ke == ki:
+                    tmp = -einsum('ie,ma,mbej->ijab', t1[ki], t1[km], eris_ovvo[km, kb, ke])
+
             t2new[ki, kj, ka] += tmp
             t2new[ki, kj, kb] -= tmp.transpose(0, 1, 3, 2)
             t2new[kj, ki, ka] -= tmp.transpose(1, 0, 2, 3)
@@ -338,7 +372,6 @@ class GCCSD(gccsd.GCCSD):
     @property
     def nkpts(self):
         return len(self.kpts)
-
     get_nocc = get_nocc
     get_nmo = get_nmo
     get_frozen_mask = get_frozen_mask
@@ -813,7 +846,7 @@ if __name__ == '__main__':
     cell.build()
 
     # Running HF and CCSD with 1x1x2 Monkhorst-Pack k-point mesh
-    kmf = scf.KRHF(cell, kpts=cell.make_kpts([1,1,2]), exxdiv=None)
+    kmf = scf.KRHF(cell, kpts=cell.make_kpts([2,2,2]), exxdiv=None)
     ehf = kmf.kernel()
     kmf = scf.addons.convert_to_ghf(kmf)
 
