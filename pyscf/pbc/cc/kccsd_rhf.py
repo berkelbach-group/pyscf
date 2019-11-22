@@ -136,13 +136,6 @@ def update_amps(cc, t1, t2, eris):
         Woooo = fimd.create_dataset('oooo', (nkpts, nkpts, nkpts, nocc, nocc, nocc, nocc), t1.dtype.char)
         Woooo = imdk.cc_Woooo(t1, t2, eris, kconserv, Woooo, cc2=cc.cc2)
 
-    # if (cc.cc2):
-    #     Foo = imdk.cc_Foo(t1, t2, eris, kconserv, cc.cc2)
-    #     Fvv = imdk.cc_Fvv(t1, t2, eris, kconserv, cc.cc2)
-    #     Fov = imdk.cc_Fov(t1, t2, eris, kconserv)
-    #     Loo = imdk.Loo(t1, t2, eris, kconserv, cc.cc2)
-    #     Lvv = imdk.Lvv(t1, t2, eris, kconserv, cc.cc2)
-
     for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
         # Chemist's notation for momentum conserving t2(ki,kj,ka,kb)
         kb = kconserv[ki, ka, kj]
@@ -152,8 +145,9 @@ def update_amps(cc, t1, t2, eris):
             kk = kconserv[kj, kl, ki]
             if (cc.cc2):
                 if kl == kb and kk == ka:
-                    tau_term = einsum('ic,jd->ijcd', t1[ka], t1[kb])
-                    t2new_tmp += 0.5 * einsum('klij,klab->ijab', Woooo[kk, kl, ki], tau_term)
+                    # tau_term = einsum('ic,jd->ijcd', t1[ka], t1[kb])
+                    # t2new_tmp += 0.5 * einsum('klij,klab->ijab', Woooo[kk, kl, ki], tau_term)
+                    t2new_tmp += 0.5 * einsum('klij,ka,lb->ijab', Woooo[kk, kl, ki], t1[ka],t1[kb])
             else:
                 tau_term = t2[kk, kl, ka].copy()
                 if kl == kb and kk == ka:
@@ -194,14 +188,14 @@ def update_amps(cc, t1, t2, eris):
     if (not cc.cc2):
         mem_now = lib.current_memory()[0]
         if (nocc ** 2 * nvir ** 2 * nkpts ** 3) * 16 / 1e6 * 2 + mem_now < cc.max_memory * .9:
-            Wvoov = imdk.cc_Wvoov(t1, t2, eris, kconserv, cc2=cc.cc2)
-            Wvovo = imdk.cc_Wvovo(t1, t2, eris, kconserv, cc2=cc.cc2)
+            Wvoov = imdk.cc_Wvoov(t1, t2, eris, kconserv)
+            Wvovo = imdk.cc_Wvovo(t1, t2, eris, kconserv)
         else:
             fimd = lib.H5TmpFile()
             Wvoov = fimd.create_dataset('voov', (nkpts, nkpts, nkpts, nvir, nocc, nocc, nvir), t1.dtype.char)
             Wvovo = fimd.create_dataset('vovo', (nkpts, nkpts, nkpts, nvir, nocc, nvir, nocc), t1.dtype.char)
-            Wvoov = imdk.cc_Wvoov(t1, t2, eris, kconserv, Wvoov, cc2=cc.cc2)
-            Wvovo = imdk.cc_Wvovo(t1, t2, eris, kconserv, Wvovo, cc2=cc.cc2)
+            Wvoov = imdk.cc_Wvoov(t1, t2, eris, kconserv, Wvoov)
+            Wvovo = imdk.cc_Wvovo(t1, t2, eris, kconserv, Wvovo)
 
         for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
             kb = kconserv[ki, ka, kj]
@@ -490,8 +484,9 @@ def add_vvvv_(cc, Ht2, t1, t2, eris):
             kj = kconserv[ka, ki, kb]
             if (cc.cc2):
                 if ki == kc and kj == kd:
-                    tau = np.einsum('ic,jd->ijcd', t1[ki], t1[kj])
-                    Ht2[ki, kj, ka] += lib.einsum('abcd,ijcd->ijab', Wvvvv, tau)
+                    # tau = np.einsum('ic,jd->ijcd', t1[ki], t1[kj])
+                    # Ht2[ki, kj, ka] += lib.einsum('abcd,ijcd->ijab', Wvvvv, tau)
+                    Ht2[ki, kj, ka] += lib.einsum('abcd,ic,jd->ijab', Wvvvv, t1[ki],t1[kj])
             else:
                 tau = t2[ki, kj, kc].copy()
                 if ki == kc and kj == kd:

@@ -35,7 +35,7 @@ einsum = lib.einsum
 
 ### Eqs. (37)-(39) "kappa"
 
-def cc_Foo(t1,t2,eris,kconserv, cc2=False):
+def cc_Foo(t1,t2,eris,kconserv):
     nkpts, nocc, nvir = t1.shape
     Fki = np.empty((nkpts,nocc,nocc),dtype=t2.dtype)
     for ki in range(nkpts):
@@ -45,15 +45,14 @@ def cc_Foo(t1,t2,eris,kconserv, cc2=False):
             for kc in range(nkpts):
                 kd = kconserv[kk,kc,kl]
                 Soovv = 2*eris.oovv[kk,kl,kc] - eris.oovv[kk,kl,kd].transpose(0,1,3,2)
-                if (not cc2):
-                    Fki[ki] += einsum('klcd,ilcd->ki',Soovv,t2[ki,kl,kc])
+                Fki[ki] += einsum('klcd,ilcd->ki',Soovv,t2[ki,kl,kc])
             #if ki == kc:
             kd = kconserv[kk,ki,kl]
             Soovv = 2*eris.oovv[kk,kl,ki] - eris.oovv[kk,kl,kd].transpose(0,1,3,2)
             Fki[ki] += einsum('klcd,ic,ld->ki',Soovv,t1[ki],t1[kl])
     return Fki
 
-def cc_Fvv(t1,t2,eris,kconserv, cc2=False):
+def cc_Fvv(t1,t2,eris,kconserv):
     nkpts, nocc, nvir = t1.shape
     Fac = np.empty((nkpts,nvir,nvir),dtype=t2.dtype)
     for ka in range(nkpts):
@@ -63,8 +62,7 @@ def cc_Fvv(t1,t2,eris,kconserv, cc2=False):
             for kk in range(nkpts):
                 kd = kconserv[kk,kc,kl]
                 Soovv = 2*eris.oovv[kk,kl,kc] - eris.oovv[kk,kl,kd].transpose(0,1,3,2)
-                if (not cc2):
-                    Fac[ka] += -einsum('klcd,klad->ac',Soovv,t2[kk,kl,ka])
+                Fac[ka] += -einsum('klcd,klad->ac',Soovv,t2[kk,kl,ka])
             #if kk == ka
             kd = kconserv[ka,kc,kl]
             Soovv = 2*eris.oovv[ka,kl,kc] - eris.oovv[ka,kl,kd].transpose(0,1,3,2)
@@ -83,10 +81,10 @@ def cc_Fov(t1,t2,eris,kconserv):
 
 ### Eqs. (40)-(41) "lambda"
 
-def Loo(t1,t2,eris,kconserv, cc2=False):
+def Loo(t1,t2,eris,kconserv):
     nkpts, nocc, nvir = t1.shape
     fov = eris.fock[:,:nocc,nocc:]
-    Lki = cc_Foo(t1,t2,eris,kconserv, cc2)
+    Lki = cc_Foo(t1,t2,eris,kconserv)
     for ki in range(nkpts):
         Lki[ki] += einsum('kc,ic->ki',fov[ki],t1[ki])
         for kl in range(nkpts):
@@ -94,10 +92,10 @@ def Loo(t1,t2,eris,kconserv, cc2=False):
             Lki[ki] +=  -einsum('lkic,lc->ki',eris.ooov[kl,ki,ki],t1[kl])
     return Lki
 
-def Lvv(t1,t2,eris,kconserv, cc2=False):
+def Lvv(t1,t2,eris,kconserv):
     nkpts, nocc, nvir = t1.shape
     fov = eris.fock[:,:nocc,nocc:]
-    Lac = cc_Fvv(t1,t2,eris,kconserv, cc2)
+    Lac = cc_Fvv(t1,t2,eris,kconserv)
     for ka in range(nkpts):
         Lac[ka] += -einsum('kc,ka->ac',fov[ka],t1[ka])
         for kk in range(nkpts):
@@ -124,19 +122,24 @@ def cc_Woooo(t1, t2, eris, kconserv, out=None, cc2=False):
                 #for kc in range(nkpts):
                 #    Wklij[kk,kl,ki] += einsum('klcd,ijcd->klij',eris.oovv[kk,kl,kc],t2[ki,kj,kc])
                 #Wklij[kk,kl,ki] += einsum('klcd,ic,jd->klij',eris.oovv[kk,kl,ki],t1[ki],t1[kj])
-                vvoo = eris.oovv[kk,kl].transpose(0,3,4,1,2).reshape(nkpts*nvir,nvir,nocc,nocc)
                 if (cc2):
-                    t2t  = np.zeros((nkpts, nvir, nvir, nocc, nocc), dtype = t1.dtype)
+                    vvoo = eris.oovv[kk,kl].transpose(0,3,4,1,2).reshape(nkpts,nvir,nvir,nocc,nocc)
+                    # t2t  = np.zeros((nkpts, nvir, nvir, nocc, nocc), dtype = t1.dtype)
+                    # t2t[ki] += einsum('ic,jd->cdij',t1[ki],t1[kj])
+                    # t2t = t2t.reshape(nkpts*nvir,nvir,nocc,nocc)
+                    oooo += einsum('cdkl,ic,jd->klij',vvoo[ki],t1[ki],t1[kj])
+                    Wklij[kk,kl,ki] = oooo
                 else:
+                    vvoo = eris.oovv[kk,kl].transpose(0,3,4,1,2).reshape(nkpts*nvir,nvir,nocc,nocc)
                     t2t  = t2[ki,kj].copy().transpose(0,3,4,1,2)
                 #for kc in range(nkpts):
                 #    kd = kconserv[ki,kc,kj]
                 #    if kc == ki and kj == kd:
                 #        t2t[kc] += einsum('ic,jd->cdij',t1[ki],t1[kj])
-                t2t[ki] += einsum('ic,jd->cdij',t1[ki],t1[kj])
-                t2t = t2t.reshape(nkpts*nvir,nvir,nocc,nocc)
-                oooo += einsum('cdkl,cdij->klij',vvoo,t2t)
-                Wklij[kk,kl,ki] = oooo
+                    t2t[ki] += einsum('ic,jd->cdij',t1[ki],t1[kj])
+                    t2t = t2t.reshape(nkpts*nvir,nvir,nocc,nocc)
+                    oooo += einsum('cdkl,cdij->klij',vvoo,t2t)
+                    Wklij[kk,kl,ki] = oooo
                 # =====   End of change  = ====
 
         # Be careful about making this term only after all the others are created
@@ -167,7 +170,7 @@ def cc_Wvvvv(t1, t2, eris, kconserv, out=None):
 
     return Wabcd
 
-def cc_Wvoov(t1, t2, eris, kconserv, out=None, cc2=False):
+def cc_Wvoov(t1, t2, eris, kconserv, out=None):
     Wakic = _new(eris.voov.shape, t1.dtype, out)
     nkpts, nocc, nvir = t1.shape
     for ka in range(nkpts):
@@ -188,12 +191,8 @@ def cc_Wvoov(t1, t2, eris, kconserv, out=None, cc2=False):
                 #Wakic[ka,kk,ki] -= einsum('lkdc,id,la->akic',eris.oovv[ka,kk,ki],t1[ki],t1[ka])
 
                 kd = kconserv[ka,kc,kk]
-                if (cc2):
-                    tau = np.zeros_like(t2[:,ki,ka])
-                    tau[ka] = 2*einsum('id,la->liad',t1[kd],t1[ka])
-                else:
-                    tau = t2[:,ki,ka].copy()
-                    tau[ka] += 2*einsum('id,la->liad',t1[kd],t1[ka])
+                tau = t2[:,ki,ka].copy()
+                tau[ka] += 2*einsum('id,la->liad',t1[kd],t1[ka])
 
                 oovv_tmp = np.array(eris.oovv[kk,:,kc])
                 voov_i[ki] -= 0.5*einsum('xklcd,xliad->akic',oovv_tmp,tau)
@@ -206,7 +205,7 @@ def cc_Wvoov(t1, t2, eris, kconserv, out=None, cc2=False):
             Wakic[ka,kk,:] = voov_i[:]
     return Wakic
 
-def cc_Wvovo(t1, t2, eris, kconserv, out=None, cc2=False):
+def cc_Wvovo(t1, t2, eris, kconserv, out=None):
     nkpts, nocc, nvir = t1.shape
     Wakci = _new((nkpts,nkpts,nkpts,nvir,nocc,nvir,nocc), t1.dtype, out)
 
@@ -224,18 +223,13 @@ def cc_Wvovo(t1, t2, eris, kconserv, out=None, cc2=False):
                 #    Wakci[ka,kk,kc] -= 0.5*einsum('lkcd,ilda->akci',eris.oovv[kl,kk,kc],t2[ki,kl,kd])
                 #Wakci[ka,kk,kc] -= einsum('lkcd,id,la->akci',eris.oovv[ka,kk,kc],t1[ki],t1[ka])
                 oovvf = eris.oovv[:,kk,kc].reshape(nkpts*nocc,nocc,nvir,nvir)
-                if (cc2):
-                    t2f   = np.zeros_like(t2[:,ki,ka])
-                    kd = kconserv[ka,kc,kk]
-                    t2f[ka] += 2*einsum('id,la->liad',t1[kd],t1[ka])
-                else:
-                    t2f   = t2[:,ki,ka].copy() #This is a tau like term
-                    #for kl in range(nkpts):
-                    #    kd = kconserv[kl,kc,kk]
-                    #    if ki == kd and kl == ka:
-                    #        t2f[kl] += 2*einsum('id,la->liad',t1[ki],t1[ka])
-                    kd = kconserv[ka,kc,kk]
-                    t2f[ka] += 2*einsum('id,la->liad',t1[kd],t1[ka])
+                t2f   = t2[:,ki,ka].copy() #This is a tau like term
+                #for kl in range(nkpts):
+                #    kd = kconserv[kl,kc,kk]
+                #    if ki == kd and kl == ka:
+                #        t2f[kl] += 2*einsum('id,la->liad',t1[ki],t1[ka])
+                kd = kconserv[ka,kc,kk]
+                t2f[ka] += 2*einsum('id,la->liad',t1[kd],t1[ka])
                 
                 t2f = t2f.reshape(nkpts*nocc,nocc,nvir,nvir)
                 vovo -= 0.5*einsum('lkcd,liad->akci',oovvf,t2f)
