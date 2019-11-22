@@ -199,8 +199,7 @@ def cc_Wvoov(t1, t2, eris, kconserv, out=None):
 
                 Soovv_tmp = 2*oovv_tmp - eris.oovv[:,kk,kc].transpose(0,2,1,3,4)
                 
-                if (not cc2):
-                    voov_i[ki] += 0.5*einsum('xklcd,xilad->akic',Soovv_tmp,t2[ki,:,ka])
+                voov_i[ki] += 0.5*einsum('xklcd,xilad->akic',Soovv_tmp,t2[ki,:,ka])
 
             Wakic[ka,kk,:] = voov_i[:]
     return Wakic
