@@ -22,29 +22,31 @@ from pyscf.cc.ccsd import BLKMIN
 # Ref: Gauss and Stanton, J. Chem. Phys. 103, 3561 (1995) Table III
 
 
-def make_tau(t2, t1, r1, fac=1, out=None):
+def make_tau(t2, t1, r1, fac=1, out=None, cc2=False):
     t1a, t1b = t1
     r1a, r1b = r1
-    tau1aa = make_tau_aa(t2[0], t1a, r1a, fac, out)
-    tau1bb = make_tau_aa(t2[2], t1b, r1b, fac, out)
-    tau1ab = make_tau_ab(t2[1], t1, r1, fac, out)
+    tau1aa = make_tau_aa(t2[0], t1a, r1a, fac, out, cc2)
+    tau1bb = make_tau_aa(t2[2], t1b, r1b, fac, out, cc2)
+    tau1ab = make_tau_ab(t2[1], t1, r1, fac, out, cc2)
     return tau1aa, tau1ab, tau1bb
 
-def make_tau_aa(t2aa, t1a, r1a, fac=1, out=None):
+def make_tau_aa(t2aa, t1a, r1a, fac=1, out=None, cc2=False):
     tau1aa = np.einsum('ia,jb->ijab', t1a, r1a)
     tau1aa-= np.einsum('ia,jb->jiab', t1a, r1a)
     tau1aa = tau1aa - tau1aa.transpose(0,1,3,2)
     tau1aa *= fac * .5
-    tau1aa += t2aa
+    if( not cc2):
+        tau1aa += t2aa
     return tau1aa
 
-def make_tau_ab(t2ab, t1, r1, fac=1, out=None):
+def make_tau_ab(t2ab, t1, r1, fac=1, out=None, cc2=False):
     t1a, t1b = t1
     r1a, r1b = r1
     tau1ab = np.einsum('ia,jb->ijab', t1a, r1b)
     tau1ab+= np.einsum('ia,jb->ijab', r1a, t1b)
     tau1ab *= fac * .5
-    tau1ab += t2ab
+    if( not cc2):
+        tau1ab += t2ab
     return tau1ab
 
 def Foo(t1, t2, eris):
