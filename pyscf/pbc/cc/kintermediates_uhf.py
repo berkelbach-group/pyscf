@@ -10,13 +10,18 @@ einsum = lib.einsum
 #FIXME: the dtype of each intermediates. When the khf is at gamma point, the
 # dtype is inconsistent between intermediates and t amplitudes
 
-def make_tau(cc, t2, t1, t1p, fac=1.):
+def make_tau(cc, t2, t1, t1p, fac=1., cc2=False):
     t2aa, t2ab, t2bb = t2
     nkpts = len(t2aa)
 
-    tauaa = t2aa.copy()
-    tauab = t2ab.copy()
-    taubb = t2bb.copy()
+    if(cc2):
+        tauaa = np.zeros_like(t2aa)
+        tauab = np.zeros_like(t2ab)
+        taubb = np.zeros_like(t2bb)
+    else:
+        tauaa = t2aa.copy()
+        tauab = t2ab.copy()
+        taubb = t2bb.copy()
     for ki in range(nkpts):
         for kj in range(nkpts):
             tauaa[ki,kj,ki] += einsum('ia,jb->ijab', fac*.5*t1[0][ki], t1p[0][kj])
@@ -171,7 +176,7 @@ def cc_Fov(cc, t1, t2, eris):
 
     return fa,fb
 
-def cc_Woooo(cc, t1, t2, eris):
+def cc_Woooo(cc, t1, t2, eris, cc2=False):
     t1a, t1b = t1
     t2aa, t2ab, t2bb = t2
     nkpts, nocca, nvira = t1a.shape
@@ -183,7 +188,7 @@ def cc_Woooo(cc, t1, t2, eris):
     WOOOO = np.zeros(eris.OOOO.shape, dtype=dtype)
 
     kconserv = cc.khelper.kconserv
-    tau_aa, tau_ab, tau_bb = make_tau(cc, t2, t1, t1)
+    tau_aa, tau_ab, tau_bb = make_tau(cc, t2, t1, t1, cc2=cc2)
     for km in range(nkpts):
         for kn in range(nkpts):
             tmp_aaaaJ = einsum('xje, ymine->yxminj', t1a, eris.ooov[km,:,kn])

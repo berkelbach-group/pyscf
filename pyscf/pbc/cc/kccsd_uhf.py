@@ -146,62 +146,63 @@ def update_amps(cc, t1, t2, eris):
                 Ht1b[ka] += einsum('IMEF,FMEA->IA', t2bb[ki,km,ke], eris.VOVV[kf,km,ke].conj())
                 Ht1b[ka] += einsum('mIfE,fmEA->IA', t2ab[km,ki,kf], eris.voVV[kf,km,ke].conj())
 
-    for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
-        kb = kconserv[ki, ka, kj]
-
-        # Fvv equation
-        Ftmpa_kb = Fvv_[kb] - 0.5 * einsum('mb,me->be', t1a[kb], Fov_[kb])
-        Ftmpb_kb = FVV_[kb] - 0.5 * einsum('MB,ME->BE', t1b[kb], FOV_[kb])
-
-        Ftmpa_ka = Fvv_[ka] - 0.5 * einsum('mb,me->be', t1a[ka], Fov_[ka])
-        Ftmpb_ka = FVV_[ka] - 0.5 * einsum('MB,ME->BE', t1b[ka], FOV_[ka])
-
-        tmp = einsum('ijae,be->ijab', t2aa[ki, kj, ka], Ftmpa_kb)
-        Ht2aa[ki, kj, ka] += tmp
-
-        tmp = einsum('IJAE,BE->IJAB', t2bb[ki, kj, ka], Ftmpb_kb)
-        Ht2bb[ki, kj, ka] += tmp
-
-        tmp = einsum('iJaE,BE->iJaB', t2ab[ki, kj, ka], Ftmpb_kb)
-        Ht2ab[ki, kj, ka] += tmp
-
-        tmp = einsum('iJeB,ae->iJaB', t2ab[ki, kj, ka], Ftmpa_ka)
-        Ht2ab[ki, kj, ka] += tmp
-
-        #P(ab)
-        tmp = einsum('ijbe,ae->ijab', t2aa[ki, kj, kb], Ftmpa_ka)
-        Ht2aa[ki, kj, ka] -= tmp
-
-        tmp = einsum('IJBE,AE->IJAB', t2bb[ki, kj, kb], Ftmpb_ka)
-        Ht2bb[ki, kj, ka] -= tmp
-
-        # Foo equation
-        Ftmpa_kj = Foo_[kj] + 0.5 * einsum('je,me->mj', t1a[kj], Fov_[kj])
-        Ftmpb_kj = FOO_[kj] + 0.5 * einsum('JE,ME->MJ', t1b[kj], FOV_[kj])
-
-        Ftmpa_ki = Foo_[ki] + 0.5 * einsum('je,me->mj', t1a[ki], Fov_[ki])
-        Ftmpb_ki = FOO_[ki] + 0.5 * einsum('JE,ME->MJ', t1b[ki], FOV_[ki])
-
-        tmp = einsum('imab,mj->ijab', t2aa[ki, kj, ka], Ftmpa_kj)
-        Ht2aa[ki, kj, ka] -= tmp
-
-        tmp = einsum('IMAB,MJ->IJAB', t2bb[ki, kj, ka], Ftmpb_kj)
-        Ht2bb[ki, kj, ka] -= tmp
-
-        tmp = einsum('iMaB,MJ->iJaB', t2ab[ki, kj, ka], Ftmpb_kj)
-        Ht2ab[ki, kj, ka] -= tmp
-
-        tmp = einsum('mJaB,mi->iJaB', t2ab[ki, kj, ka], Ftmpa_ki)
-        Ht2ab[ki, kj, ka] -= tmp
-
-        #P(ij)
-        tmp = einsum('jmab,mi->ijab', t2aa[kj, ki, ka], Ftmpa_ki)
-        Ht2aa[ki, kj, ka] += tmp
-
-        tmp = einsum('JMAB,MI->IJAB', t2bb[kj, ki, ka], Ftmpb_ki)
-        Ht2bb[ki, kj, ka] += tmp
-
     # T2 equation
+    if (not cc.cc2):
+        for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
+            kb = kconserv[ki, ka, kj]
+    
+            # Fvv equation
+            Ftmpa_kb = Fvv_[kb] - 0.5 * einsum('mb,me->be', t1a[kb], Fov_[kb])
+            Ftmpb_kb = FVV_[kb] - 0.5 * einsum('MB,ME->BE', t1b[kb], FOV_[kb])
+    
+            Ftmpa_ka = Fvv_[ka] - 0.5 * einsum('mb,me->be', t1a[ka], Fov_[ka])
+            Ftmpb_ka = FVV_[ka] - 0.5 * einsum('MB,ME->BE', t1b[ka], FOV_[ka])
+    
+            tmp = einsum('ijae,be->ijab', t2aa[ki, kj, ka], Ftmpa_kb)
+            Ht2aa[ki, kj, ka] += tmp
+    
+            tmp = einsum('IJAE,BE->IJAB', t2bb[ki, kj, ka], Ftmpb_kb)
+            Ht2bb[ki, kj, ka] += tmp
+    
+            tmp = einsum('iJaE,BE->iJaB', t2ab[ki, kj, ka], Ftmpb_kb)
+            Ht2ab[ki, kj, ka] += tmp
+    
+            tmp = einsum('iJeB,ae->iJaB', t2ab[ki, kj, ka], Ftmpa_ka)
+            Ht2ab[ki, kj, ka] += tmp
+    
+            #P(ab)
+            tmp = einsum('ijbe,ae->ijab', t2aa[ki, kj, kb], Ftmpa_ka)
+            Ht2aa[ki, kj, ka] -= tmp
+    
+            tmp = einsum('IJBE,AE->IJAB', t2bb[ki, kj, kb], Ftmpb_ka)
+            Ht2bb[ki, kj, ka] -= tmp
+    
+            # Foo equation
+            Ftmpa_kj = Foo_[kj] + 0.5 * einsum('je,me->mj', t1a[kj], Fov_[kj])
+            Ftmpb_kj = FOO_[kj] + 0.5 * einsum('JE,ME->MJ', t1b[kj], FOV_[kj])
+    
+            Ftmpa_ki = Foo_[ki] + 0.5 * einsum('je,me->mj', t1a[ki], Fov_[ki])
+            Ftmpb_ki = FOO_[ki] + 0.5 * einsum('JE,ME->MJ', t1b[ki], FOV_[ki])
+    
+            tmp = einsum('imab,mj->ijab', t2aa[ki, kj, ka], Ftmpa_kj)
+            Ht2aa[ki, kj, ka] -= tmp
+    
+            tmp = einsum('IMAB,MJ->IJAB', t2bb[ki, kj, ka], Ftmpb_kj)
+            Ht2bb[ki, kj, ka] -= tmp
+    
+            tmp = einsum('iMaB,MJ->iJaB', t2ab[ki, kj, ka], Ftmpb_kj)
+            Ht2ab[ki, kj, ka] -= tmp
+    
+            tmp = einsum('mJaB,mi->iJaB', t2ab[ki, kj, ka], Ftmpa_ki)
+            Ht2ab[ki, kj, ka] -= tmp
+    
+            #P(ij)
+            tmp = einsum('jmab,mi->ijab', t2aa[kj, ki, ka], Ftmpa_ki)
+            Ht2aa[ki, kj, ka] += tmp
+    
+            tmp = einsum('JMAB,MI->IJAB', t2bb[kj, ki, ka], Ftmpb_ki)
+            Ht2bb[ki, kj, ka] += tmp
+    
     eris_ovov = np.asarray(eris.ovov)
     eris_OVOV = np.asarray(eris.OVOV)
     eris_ovOV = np.asarray(eris.ovOV)
@@ -209,8 +210,8 @@ def update_amps(cc, t1, t2, eris):
     Ht2bb += (eris_OVOV.transpose(0,2,1,3,5,4,6) - eris_OVOV.transpose(2,0,1,5,3,4,6)).conj()
     Ht2ab += eris_ovOV.transpose(0,2,1,3,5,4,6).conj()
 
-    tauaa, tauab, taubb = kintermediates_uhf.make_tau(cc, t2, t1, t1)
-    Woooo, WooOO, WOOOO = kintermediates_uhf.cc_Woooo(cc, t1, t2, eris)
+    tauaa, tauab, taubb = kintermediates_uhf.make_tau(cc, t2, t1, t1, cc2=cc.cc2)
+    Woooo, WooOO, WOOOO = kintermediates_uhf.cc_Woooo(cc, t1, t2, eris, cc2=cc.cc2)
 
     # Add the contributions from Wvvvv
     for km, ki, kn in kpts_helper.loop_kkk(nkpts):
@@ -227,18 +228,20 @@ def update_amps(cc, t1, t2, eris):
 
     add_vvvv_(cc, (Ht2aa, Ht2ab, Ht2bb), t1, t2, eris)
 
-    Wovvo, WovVO, WOVvo, WOVVO, WoVVo, WOvvO = \
-            kintermediates_uhf.cc_Wovvo(cc, t1, t2, eris)
+    if (not cc.cc2):
+        Wovvo, WovVO, WOVvo, WOVVO, WoVVo, WOvvO = \
+                kintermediates_uhf.cc_Wovvo(cc, t1, t2, eris)
 
     #:Ht2ab += einsum('xwzimae,wvumeBJ,xwzv,wuvy->xyziJaB', t2aa, WovVO, P, P)
     #:Ht2ab += einsum('xwziMaE,wvuMEBJ,xwzv,wuvy->xyziJaB', t2ab, WOVVO, P, P)
     #:Ht2ab -= einsum('xie,zma,uwzBJme,zuwx,xyzu->xyziJaB', t1a, t1a, eris.VOov, P, P)
-    for kx, kw, kz in kpts_helper.loop_kkk(nkpts):
-        kv = kconserv[kx, kz, kw]
-        for ku in range(nkpts):
-            ky = kconserv[kw, kv, ku]
-            Ht2ab[kx, ky, kz] += lib.einsum('imae,mebj->ijab', t2aa[kx,kw,kz], WovVO[kw,kv,ku])
-            Ht2ab[kx, ky, kz] += lib.einsum('imae,mebj->ijab', t2ab[kx,kw,kz], WOVVO[kw,kv,ku])
+    if (not cc.cc2):
+        for kx, kw, kz in kpts_helper.loop_kkk(nkpts):
+            kv = kconserv[kx, kz, kw]
+            for ku in range(nkpts):
+                ky = kconserv[kw, kv, ku]
+                Ht2ab[kx, ky, kz] += lib.einsum('imae,mebj->ijab', t2aa[kx,kw,kz], WovVO[kw,kv,ku])
+                Ht2ab[kx, ky, kz] += lib.einsum('imae,mebj->ijab', t2ab[kx,kw,kz], WOVVO[kw,kv,ku])
 
     #for kz, ku, kw in kpts_helper.loop_kkk(nkpts):
     #    kx = kconserv[kz,kw,ku]
@@ -256,11 +259,11 @@ def update_amps(cc, t1, t2, eris):
     #        ky = kconserv[kw, kv, ku]
             #Ht2ab[ky,kx,ku] += lib.einsum('miea, mebj-> jiba', t2ab[kw,kx,kv], Wovvo[kw,kv,ku])
             #Ht2ab[ky,kx,ku] += lib.einsum('miea, mebj-> jiba', t2bb[kw,kx,kv], WOVvo[kw,kv,ku])
-
-    for km, ke, kb in kpts_helper.loop_kkk(nkpts):
-        kj = kconserv[km, ke, kb]
-        Ht2ab[kj,:,kb] += einsum('xmiea, mebj->xjiba', t2ab[km,:,ke], Wovvo[km,ke,kb])
-        Ht2ab[kj,:,kb] += einsum('xmiea, mebj->xjiba', t2bb[km,:,ke], WOVvo[km,ke,kb])
+    if (not cc.cc2):
+        for km, ke, kb in kpts_helper.loop_kkk(nkpts):
+            kj = kconserv[km, ke, kb]
+            Ht2ab[kj,:,kb] += einsum('xmiea, mebj->xjiba', t2ab[km,:,ke], Wovvo[km,ke,kb])
+            Ht2ab[kj,:,kb] += einsum('xmiea, mebj->xjiba', t2bb[km,:,ke], WOVvo[km,ke,kb])
 
 
     for kz, ku, kw in kpts_helper.loop_kkk(nkpts):
@@ -276,9 +279,10 @@ def update_amps(cc, t1, t2, eris):
     #    for ku in range(nkpts):
     #        ky = kconserv[kw, kv, ku]
     #        Ht2ab[kx,ky,ku] += lib.einsum('imea,mebj->ijba', t2ab[kx,kw,kv],WOvvO[kw,kv,ku])
-    for km, ke, kb in kpts_helper.loop_kkk(nkpts):
-        kj = kconserv[km, ke, kb]
-        Ht2ab[:,kj,kb] += einsum('ximea, mebj->xijba', t2ab[:,km,ke], WOvvO[km,ke,kb])
+    if (not cc.cc2):
+        for km, ke, kb in kpts_helper.loop_kkk(nkpts):
+            kj = kconserv[km, ke, kb]
+            Ht2ab[:,kj,kb] += einsum('ximea, mebj->xijba', t2ab[:,km,ke], WOvvO[km,ke,kb])
 
 
     for kz,ku,kw in kpts_helper.loop_kkk(nkpts):
@@ -288,11 +292,12 @@ def update_amps(cc, t1, t2, eris):
 
     #:Ht2ab += einsum('wxzmIaE,wvumEBj,xwzv,wuvy->yxzjIaB', t2ab, WoVVo, P, P)
     #:Ht2ab -= einsum('xIE,zma,zwumjBE,zuwx,xyzu->yxzjIaB', t1b, t1a, eris.ooVV, P, P)
-    for kx, kw, kz in kpts_helper.loop_kkk(nkpts):
-        kv = kconserv[kx, kz, kw]
-        for ku in range(nkpts):
-            ky = kconserv[kw, kv, ku]
-            Ht2ab[ky, kx, kz] += lib.einsum('miae,mebj->jiab', t2ab[kw,kx,kz], WoVVo[kw,kv,ku])
+    if (not cc.cc2):
+        for kx, kw, kz in kpts_helper.loop_kkk(nkpts):
+            kv = kconserv[kx, kz, kw]
+            for ku in range(nkpts):
+                ky = kconserv[kw, kv, ku]
+                Ht2ab[ky, kx, kz] += lib.einsum('miae,mebj->jiab', t2ab[kw,kx,kz], WoVVo[kw,kv,ku])
 
     for kz, ku, kw in kpts_helper.loop_kkk(nkpts):
         kx = kconserv[kz,kw,ku]
@@ -303,12 +308,13 @@ def update_amps(cc, t1, t2, eris):
     #:u2aa += einsum('xwziMaE,wvuMEbj,xwzv,wuvy->xyzijab', t2ab, WOVvo, P, P)
     #Left this in to keep proper shape, need to replace later
     u2aa  = np.zeros_like(t2aa)
-    for kx, kw, kz in kpts_helper.loop_kkk(nkpts):
-        kv = kconserv[kx, kz, kw]
-        for ku in range(nkpts):
-            ky = kconserv[kw, kv, ku]
-            u2aa[kx,ky,kz] += lib.einsum('imae, mebj->ijab', t2aa[kx,kw,kz], Wovvo[kw,kv,ku])
-            u2aa[kx,ky,kz] += lib.einsum('imae, mebj->ijab', t2ab[kx,kw,kz], WOVvo[kw,kv,ku])
+    if (not cc.cc2):
+        for kx, kw, kz in kpts_helper.loop_kkk(nkpts):
+            kv = kconserv[kx, kz, kw]
+            for ku in range(nkpts):
+                ky = kconserv[kw, kv, ku]
+                u2aa[kx,ky,kz] += lib.einsum('imae, mebj->ijab', t2aa[kx,kw,kz], Wovvo[kw,kv,ku])
+                u2aa[kx,ky,kz] += lib.einsum('imae, mebj->ijab', t2ab[kx,kw,kz], WOVvo[kw,kv,ku])
 
 
     #:u2aa += einsum('xie,zma,zwumjbe,zuwx,xyzu->xyzijab', t1a, t1a, eris.oovv, P, P)
@@ -340,12 +346,13 @@ def update_amps(cc, t1, t2, eris):
 
     u2bb = np.zeros_like(t2bb)
 
-    for kx, kw, kz in kpts_helper.loop_kkk(nkpts):
-        kv = kconserv[kx, kz, kw]
-        for ku in range(nkpts):
-            ky = kconserv[kw,kv, ku]
-            u2bb[kx, ky, kz] += lib.einsum('imae,mebj->ijab', t2bb[kx,kw,kz], WOVVO[kw,kv,ku])
-            u2bb[kx, ky, kz] += lib.einsum('miea, mebj-> ijab', t2ab[kw,kx,kv],WovVO[kw,kv,ku])
+    if (not cc.cc2):
+        for kx, kw, kz in kpts_helper.loop_kkk(nkpts):
+            kv = kconserv[kx, kz, kw]
+            for ku in range(nkpts):
+                ky = kconserv[kw,kv, ku]
+                u2bb[kx, ky, kz] += lib.einsum('imae,mebj->ijab', t2bb[kx,kw,kz], WOVVO[kw,kv,ku])
+                u2bb[kx, ky, kz] += lib.einsum('miea, mebj-> ijab', t2ab[kw,kx,kv],WovVO[kw,kv,ku])
 
     for kz, ku, kw in kpts_helper.loop_kkk(nkpts):
         kx = kconserv[kz, kw, ku]
@@ -601,9 +608,14 @@ def add_vvvv_(cc, Ht2, t1, t2, eris):
         Wvvvv, WvvVV, WVVVV = get_Wvvvv(ka, kc, kb)
         for ki in range(nkpts):
             kj = kconserv[ka,ki,kb]
-            tauaa = t2aa[ki,kj,kc].copy()
-            tauab = t2ab[ki,kj,kc].copy()
-            taubb = t2bb[ki,kj,kc].copy()
+            if (cc.cc2):
+                tauaa = np.zeros_like(t2aa[ki,kj,kc])
+                tauab = np.zeros_like(t2ab[ki,kj,kc])
+                taubb = np.zeros_like(t2bb[ki,kj,kc])
+            else:
+                tauaa = t2aa[ki,kj,kc].copy()
+                tauab = t2ab[ki,kj,kc].copy()
+                taubb = t2bb[ki,kj,kc].copy()
             if ki == kc and kj == kd:
                 tauaa += einsum('ic,jd->ijcd', t1a[ki], t1a[kj])
                 tauab += einsum('ic,jd->ijcd', t1a[ki], t1b[kj])
@@ -640,7 +652,7 @@ class KUCCSD(uccsd.UCCSD):
 
     max_space = getattr(__config__, 'pbc_cc_kccsd_uhf_KUCCSD_max_space', 20)
 
-    def __init__(self, mf, frozen=0, mo_coeff=None, mo_occ=None):
+    def __init__(self, mf, frozen=0, mo_coeff=None, mo_occ=None, cc2=False):
         assert(isinstance(mf, scf.khf.KSCF))
         uccsd.UCCSD.__init__(self, mf, frozen, mo_coeff, mo_occ)
         self.kpts = mf.kpts
@@ -650,6 +662,7 @@ class KUCCSD(uccsd.UCCSD):
 
         keys = set(['kpts', 'mo_energy', 'khelper', 'max_space', 'direct'])
         self._keys = self._keys.union(keys)
+        self.cc2 = cc2
 
     @property
     def nkpts(self):
@@ -869,8 +882,12 @@ def _kuccsd_eris_common_(cc, eris, buf=None):
     madelung = tools.madelung(cell, kpts)
     mo_ea = [focka[k].diagonal().real for k in range(nkpts)]
     mo_eb = [fockb[k].diagonal().real for k in range(nkpts)]
-    mo_ea = [_adjust_occ(e, nocca, -madelung) for e in mo_ea]
-    mo_eb = [_adjust_occ(e, noccb, -madelung) for e in mo_eb]
+    if (cc.cc2):
+        mo_ea = [_adjust_occ(e, nocca, 0.0) for e in mo_ea]
+        mo_eb = [_adjust_occ(e, noccb, 0.0) for e in mo_eb]
+    else:
+        mo_ea = [_adjust_occ(e, nocca, -madelung) for e in mo_ea]
+        mo_eb = [_adjust_occ(e, noccb, -madelung) for e in mo_eb]
     eris.mo_energy = (mo_ea, mo_eb)
 
     orboa = np.asarray(mo_coeff[0][:,:,:nocca], order='C')

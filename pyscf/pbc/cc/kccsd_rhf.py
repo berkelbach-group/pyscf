@@ -130,11 +130,18 @@ def update_amps(cc, t1, t2, eris):
 
     mem_now = lib.current_memory()[0]
     if (nocc ** 4 * nkpts ** 3) * 16 / 1e6 + mem_now < cc.max_memory * .9:
-        Woooo = imdk.cc_Woooo(t1, t2, eris, kconserv)
+        Woooo = imdk.cc_Woooo(t1, t2, eris, kconserv, cc2=cc.cc2)
     else:
         fimd = lib.H5TmpFile()
         Woooo = fimd.create_dataset('oooo', (nkpts, nkpts, nkpts, nocc, nocc, nocc, nocc), t1.dtype.char)
-        Woooo = imdk.cc_Woooo(t1, t2, eris, kconserv, Woooo)
+        Woooo = imdk.cc_Woooo(t1, t2, eris, kconserv, Woooo, cc2=cc.cc2)
+
+    # if (cc.cc2):
+    #     Foo = imdk.cc_Foo(t1, t2, eris, kconserv, cc.cc2)
+    #     Fvv = imdk.cc_Fvv(t1, t2, eris, kconserv, cc.cc2)
+    #     Fov = imdk.cc_Fov(t1, t2, eris, kconserv)
+    #     Loo = imdk.Loo(t1, t2, eris, kconserv, cc.cc2)
+    #     Lvv = imdk.Lvv(t1, t2, eris, kconserv, cc.cc2)
 
     for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
         # Chemist's notation for momentum conserving t2(ki,kj,ka,kb)
@@ -143,12 +150,18 @@ def update_amps(cc, t1, t2, eris):
         t2new_tmp = np.zeros((nocc, nocc, nvir, nvir), dtype=t2.dtype)
         for kl in range(nkpts):
             kk = kconserv[kj, kl, ki]
-            tau_term = t2[kk, kl, ka].copy()
-            if kl == kb and kk == ka:
-                tau_term += einsum('ic,jd->ijcd', t1[ka], t1[kb])
-            t2new_tmp += 0.5 * einsum('klij,klab->ijab', Woooo[kk, kl, ki], tau_term)
+            if (cc.cc2):
+                if kl == kb and kk == ka:
+                    tau_term = einsum('ic,jd->ijcd', t1[ka], t1[kb])
+                    t2new_tmp += 0.5 * einsum('klij,klab->ijab', Woooo[kk, kl, ki], tau_term)
+            else:
+                tau_term = t2[kk, kl, ka].copy()
+                if kl == kb and kk == ka:
+                    tau_term += einsum('ic,jd->ijcd', t1[ka], t1[kb])
+                t2new_tmp += 0.5 * einsum('klij,klab->ijab', Woooo[kk, kl, ki], tau_term)
         t2new[ki, kj, ka] += t2new_tmp
         t2new[kj, ki, kb] += t2new_tmp.transpose(1, 0, 3, 2)
+
     Woooo = None
     fimd = None
     time1 = log.timer_debug1('t2 oooo', *time1)
@@ -160,8 +173,11 @@ def update_amps(cc, t1, t2, eris):
     for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
         kb = kconserv[ki, ka, kj]
 
-        t2new_tmp = einsum('ac,ijcb->ijab', Lvv[ka], t2[ki, kj, ka])
-        t2new_tmp += einsum('ki,kjab->ijab', -Loo[ki], t2[ki, kj, ka])
+        if (cc.cc2):
+            t2new_tmp = np.zeros_like(t2[ki, kj, ka])
+        else:
+            t2new_tmp = einsum('ac,ijcb->ijab', Lvv[ka], t2[ki, kj, ka])
+            t2new_tmp += einsum('ki,kjab->ijab', -Loo[ki], t2[ki, kj, ka])
 
         kc = kconserv[ka, ki, kb]
         tmp2 = np.asarray(eris.vovv[kc, ki, kb]).transpose(3, 2, 1, 0).conj() \
@@ -175,36 +191,37 @@ def update_amps(cc, t1, t2, eris):
         t2new[ki, kj, ka] += t2new_tmp
         t2new[kj, ki, kb] += t2new_tmp.transpose(1, 0, 3, 2)
 
-    mem_now = lib.current_memory()[0]
-    if (nocc ** 2 * nvir ** 2 * nkpts ** 3) * 16 / 1e6 * 2 + mem_now < cc.max_memory * .9:
-        Wvoov = imdk.cc_Wvoov(t1, t2, eris, kconserv)
-        Wvovo = imdk.cc_Wvovo(t1, t2, eris, kconserv)
-    else:
-        fimd = lib.H5TmpFile()
-        Wvoov = fimd.create_dataset('voov', (nkpts, nkpts, nkpts, nvir, nocc, nocc, nvir), t1.dtype.char)
-        Wvovo = fimd.create_dataset('vovo', (nkpts, nkpts, nkpts, nvir, nocc, nvir, nocc), t1.dtype.char)
-        Wvoov = imdk.cc_Wvoov(t1, t2, eris, kconserv, Wvoov)
-        Wvovo = imdk.cc_Wvovo(t1, t2, eris, kconserv, Wvovo)
+    if (not cc.cc2):
+        mem_now = lib.current_memory()[0]
+        if (nocc ** 2 * nvir ** 2 * nkpts ** 3) * 16 / 1e6 * 2 + mem_now < cc.max_memory * .9:
+            Wvoov = imdk.cc_Wvoov(t1, t2, eris, kconserv, cc2=cc.cc2)
+            Wvovo = imdk.cc_Wvovo(t1, t2, eris, kconserv, cc2=cc.cc2)
+        else:
+            fimd = lib.H5TmpFile()
+            Wvoov = fimd.create_dataset('voov', (nkpts, nkpts, nkpts, nvir, nocc, nocc, nvir), t1.dtype.char)
+            Wvovo = fimd.create_dataset('vovo', (nkpts, nkpts, nkpts, nvir, nocc, nvir, nocc), t1.dtype.char)
+            Wvoov = imdk.cc_Wvoov(t1, t2, eris, kconserv, Wvoov, cc2=cc.cc2)
+            Wvovo = imdk.cc_Wvovo(t1, t2, eris, kconserv, Wvovo, cc2=cc.cc2)
 
-    for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
-        kb = kconserv[ki, ka, kj]
-        t2new_tmp = np.zeros((nocc, nocc, nvir, nvir), dtype=t2.dtype)
-        for kk in range(nkpts):
-            kc = kconserv[ka, ki, kk]
-            tmp_voov = 2. * Wvoov[ka, kk, ki] - Wvovo[ka, kk, kc].transpose(0, 1, 3, 2)
-            t2new_tmp += einsum('akic,kjcb->ijab', tmp_voov, t2[kk, kj, kc])
+        for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
+            kb = kconserv[ki, ka, kj]
+            t2new_tmp = np.zeros((nocc, nocc, nvir, nvir), dtype=t2.dtype)
+            for kk in range(nkpts):
+                kc = kconserv[ka, ki, kk]
+                tmp_voov = 2. * Wvoov[ka, kk, ki] - Wvovo[ka, kk, kc].transpose(0, 1, 3, 2)
+                t2new_tmp += einsum('akic,kjcb->ijab', tmp_voov, t2[kk, kj, kc])
 
-            kc = kconserv[ka, ki, kk]
-            t2new_tmp -= einsum('akic,kjbc->ijab', Wvoov[ka, kk, ki], t2[kk, kj, kb])
+                kc = kconserv[ka, ki, kk]
+                t2new_tmp -= einsum('akic,kjbc->ijab', Wvoov[ka, kk, ki], t2[kk, kj, kb])
 
-            kc = kconserv[kk, ka, kj]
-            t2new_tmp -= einsum('bkci,kjac->ijab', Wvovo[kb, kk, kc], t2[kk, kj, ka])
+                kc = kconserv[kk, ka, kj]
+                t2new_tmp -= einsum('bkci,kjac->ijab', Wvovo[kb, kk, kc], t2[kk, kj, ka])
 
-        t2new[ki, kj, ka] += t2new_tmp
-        t2new[kj, ki, kb] += t2new_tmp.transpose(1, 0, 3, 2)
-    Wvoov = Wvovo = None
-    fimd = None
-    time1 = log.timer_debug1('t2 voov', *time1)
+            t2new[ki, kj, ka] += t2new_tmp
+            t2new[kj, ki, kb] += t2new_tmp.transpose(1, 0, 3, 2)
+        Wvoov = Wvovo = None
+        fimd = None
+        time1 = log.timer_debug1('t2 voov', *time1)
 
     for ki in range(nkpts):
         ka = ki
@@ -471,10 +488,15 @@ def add_vvvv_(cc, Ht2, t1, t2, eris):
         Wvvvv = get_Wvvvv(ka, kb, kc)
         for ki in range(nkpts):
             kj = kconserv[ka, ki, kb]
-            tau = t2[ki, kj, kc].copy()
-            if ki == kc and kj == kd:
-                tau += np.einsum('ic,jd->ijcd', t1[ki], t1[kj])
-            Ht2[ki, kj, ka] += lib.einsum('abcd,ijcd->ijab', Wvvvv, tau)
+            if (cc.cc2):
+                if ki == kc and kj == kd:
+                    tau = np.einsum('ic,jd->ijcd', t1[ki], t1[kj])
+                    Ht2[ki, kj, ka] += lib.einsum('abcd,ijcd->ijab', Wvvvv, tau)
+            else:
+                tau = t2[ki, kj, kc].copy()
+                if ki == kc and kj == kd:
+                    tau += np.einsum('ic,jd->ijcd', t1[ki], t1[kj])
+                Ht2[ki, kj, ka] += lib.einsum('abcd,ijcd->ijab', Wvvvv, tau)
     fimd = None
     return Ht2
 
@@ -497,7 +519,7 @@ def kconserve_pmatrix(nkpts, kconserv):
 class RCCSD(pyscf.cc.ccsd.CCSD):
     max_space = getattr(__config__, 'pbc_cc_kccsd_rhf_KRCCSD_max_space', 20)
 
-    def __init__(self, mf, frozen=0, mo_coeff=None, mo_occ=None):
+    def __init__(self, mf, frozen=0, mo_coeff=None, mo_occ=None, cc2=False):
         assert (isinstance(mf, scf.khf.KSCF))
         pyscf.cc.ccsd.CCSD.__init__(self, mf, frozen, mo_coeff, mo_occ)
         self.kpts = mf.kpts
@@ -514,6 +536,7 @@ class RCCSD(pyscf.cc.ccsd.CCSD):
                     'ea_partition', 'max_space', 'direct'])
         self._keys = self._keys.union(keys)
         self.__imds__ = None
+        self.cc2 = cc2
 
     @property
     def nkpts(self):
@@ -753,7 +776,11 @@ class _ERIS:  # (pyscf.cc.ccsd._ChemistsERIs):
             # FIXME: Whether to add this correction for other exxdiv treatments?
             # Without the correction, MP2 energy may be largely off the correct value.
             madelung = tools.madelung(cell, kpts)
-            self.mo_energy = [_adjust_occ(mo_e, nocc, -madelung)
+            if (cc.cc2):
+                self.mo_energy = [_adjust_occ(mo_e, nocc, 0.0)
+                              for k, mo_e in enumerate(self.mo_energy)]
+            else:
+                self.mo_energy = [_adjust_occ(mo_e, nocc, -madelung)
                               for k, mo_e in enumerate(self.mo_energy)]
 
         # Get location of padded elements in occupied and virtual space.

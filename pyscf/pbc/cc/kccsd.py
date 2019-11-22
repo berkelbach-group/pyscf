@@ -19,6 +19,7 @@
 
 import time
 import numpy
+import numpy.linalg
 from functools import reduce
 
 from pyscf import lib
@@ -70,7 +71,8 @@ def update_amps(cc, t1, t2, eris):
     log = logger.Logger(cc.stdout, cc.verbose)
     nkpts, nocc, nvir = t1.shape
     fock = eris.fock
-    mo_e_o = [e[:nocc] for e in eris.mo_energy]
+    mo_e_o = [e[:nocc] for e in eris
+    .mo_energy]
     mo_e_v = [e[nocc:] + cc.level_shift for e in eris.mo_energy]
 
     # Get location of padded elements in occupied and virtual space
@@ -79,6 +81,10 @@ def update_amps(cc, t1, t2, eris):
     fov = fock[:, :nocc, nocc:].copy()
     foo = fock[:, :nocc, :nocc].copy()
     fvv = fock[:, nocc:, nocc:].copy()
+
+    for k in range(nkpts):
+        foo[k][numpy.diag_indices(nocc)] -= mo_e_o[k]
+        fvv[k][numpy.diag_indices(nvir)] -= mo_e_v[k]
 
     # Get the momentum conservation array
     # Note: chemist's notation for momentum conserving t2(ki,kj,ka,kb), even though
@@ -129,106 +135,40 @@ def update_amps(cc, t1, t2, eris):
                 t1new[ka] += -0.5 * einsum('imef,maef->ia', t2[ki, km, ke], eris.ovvv[km, ka, ke])
                 t1new[ka] += -0.5 * einsum('mnae,nmei->ia', t2[km, kn, ka], eris_oovo[kn, km, ke])
 
-    # # T2 equation
-    # t2new = numpy.array(eris.oovv).conj()
-    # for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
-    #     # Chemist's notation for momentum conserving t2(ki,kj,ka,kb)
-    #     kb = kconserv[ki, ka, kj]
-
-    #     Ftmp = Fvv[kb] - 0.5 * einsum('mb,me->be', t1[kb], Fov[kb])
-    #     tmp = einsum('ijae,be->ijab', t2[ki, kj, ka], Ftmp)
-    #     t2new[ki, kj, ka] += tmp
-
-    #     #t2new[ki,kj,kb] -= tmp.transpose(0,1,3,2)
-    #     Ftmp = Fvv[ka] - 0.5 * einsum('ma,me->ae', t1[ka], Fov[ka])
-    #     tmp = einsum('ijbe,ae->ijab', t2[ki, kj, kb], Ftmp)
-    #     t2new[ki, kj, ka] -= tmp
-
-    #     Ftmp = Foo[kj] + 0.5 * einsum('je,me->mj', t1[kj], Fov[kj])
-    #     tmp = einsum('imab,mj->ijab', t2[ki, kj, ka], Ftmp)
-    #     t2new[ki, kj, ka] -= tmp
-
-    #     #t2new[kj,ki,ka] += tmp.transpose(1,0,2,3)
-    #     Ftmp = Foo[ki] + 0.5 * einsum('ie,me->mi', t1[ki], Fov[ki])
-    #     tmp = einsum('jmab,mi->ijab', t2[kj, ki, ka], Ftmp)
-    #     t2new[ki, kj, ka] += tmp
-
-    #     for km in range(nkpts):
-    #         # Wminj
-    #         #   - km - kn + ka + kb = 0
-    #         # =>  kn = ka - km + kb
-    #         kn = kconserv[ka, km, kb]
-    #         t2new[ki, kj, ka] += 0.5 * einsum('mnab,mnij->ijab', tau[km, kn, ka], Woooo[km, kn, ki])
-    #         ke = km
-    #         t2new[ki, kj, ka] += 0.5 * einsum('ijef,abef->ijab', tau[ki, kj, ke], Wvvvv[ka, kb, ke])
-
-    #         # Wmbej
-    #         #     - km - kb + ke + kj = 0
-    #         #  => ke = km - kj + kb
-    #         ke = kconserv[km, kj, kb]
-    #         tmp = einsum('imae,mbej->ijab', t2[ki, km, ka], Wovvo[km, kb, ke])
-    #         #     - km - kb + ke + kj = 0
-    #         # =>  ke = km - kj + kb
-    #         #
-    #         # t[i,e] => ki = ke
-    #         # t[m,a] => km = ka
-    #         if km == ka and ke == ki:
-    #             tmp -= einsum('ie,ma,mbej->ijab', t1[ki], t1[km], eris_ovvo[km, kb, ke])
-    #         t2new[ki, kj, ka] += tmp
-    #         t2new[ki, kj, kb] -= tmp.transpose(0, 1, 3, 2)
-    #         t2new[kj, ki, ka] -= tmp.transpose(1, 0, 2, 3)
-    #         t2new[kj, ki, kb] += tmp.transpose(1, 0, 3, 2)
-
-    #     ke = ki
-    #     tmp = einsum('ie,abej->ijab', t1[ki], eris_vvvo[ka, kb, ke])
-    #     t2new[ki, kj, ka] += tmp
-    #     # P(ij) term
-    #     ke = kj
-    #     tmp = einsum('je,abei->ijab', t1[kj], eris_vvvo[ka, kb, ke])
-    #     t2new[ki, kj, ka] -= tmp
-
-    #     km = ka
-    #     tmp = einsum('ma,mbij->ijab', t1[ka], eris.ovoo[km, kb, ki])
-    #     t2new[ki, kj, ka] -= tmp
-    #     # P(ab) term
-    #     km = kb
-    #     tmp = einsum('mb,maij->ijab', t1[kb], eris.ovoo[km, ka, ki])
-    #     t2new[ki, kj, ka] += tmp
-    do_cc2 = True
-
-    if (do_cc2):
-        Fov = imdk.cc_Fov(cc, t1, t2, eris, kconserv)
-        
-        Fvv = imdk.cc_Fvv(cc, t1, t2, eris, kconserv, cc2=do_cc2)
-        Foo = imdk.cc_Foo(cc, t1, t2, eris, kconserv, cc2=do_cc2)
-        tau = imdk.make_tau(cc, t2, t1, t1, kconserv, cc2=do_cc2)
-        Woooo = imdk.cc_Woooo(cc, t1, t2, eris, kconserv, cc2 = do_cc2)
-        Wvvvv = imdk.cc_Wvvvv(cc, t1, t2, eris, kconserv, cc2 = do_cc2)
-        Wovvo = imdk.cc_Wovvo(cc, t1, t2, eris, kconserv, cc2 = do_cc2)
-        
-        for k in range(nkpts):
-            Foo[k][numpy.diag_indices(nocc)] -= mo_e_o[k]
-            Fvv[k][numpy.diag_indices(nvir)] -= mo_e_v[k]
+    if (cc.cc2):
+	    # t2 = numpy.zeros_like(t2)
+	    Fov = imdk.cc_Fov(cc, t1, t2, eris, kconserv)
+	    Fvv = imdk.cc_Fvv(cc, t1, t2, eris, kconserv, cc2 = cc.cc2)
+	    Foo = imdk.cc_Foo(cc, t1, t2, eris, kconserv, cc2 = cc.cc2)
+	    tau = imdk.make_tau(cc, t2, t1, t1, kconserv, cc2 = cc.cc2)
+	    Woooo = imdk.cc_Woooo(cc, t1, t2, eris, kconserv, cc2 = cc.cc2)
+	    Wvvvv = imdk.cc_Wvvvv(cc, t1, t2, eris, kconserv, cc2 = cc.cc2)
+	    Wovvo = imdk.cc_Wovvo(cc, t1, t2, eris, kconserv, cc2 = cc.cc2)
+	    for k in range(nkpts):
+	        Foo[k][numpy.diag_indices(nocc)] -= mo_e_o[k]
+	        Fvv[k][numpy.diag_indices(nvir)] -= mo_e_v[k]
     
     # T2 equation
     t2new = numpy.array(eris.oovv).conj()
     for ki, kj, ka in kpts_helper.loop_kkk(nkpts):
         # Chemist's notation for momentum conserving t2(ki,kj,ka,kb)
         kb = kconserv[ki, ka, kj]
-
-        if (not do_cc2):
+        
+        if (not cc.cc2):
             Ftmp = Fvv[kb] - 0.5 * einsum('mb,me->be', t1[kb], Fov[kb])
             tmp = einsum('ijae,be->ijab', t2[ki, kj, ka], Ftmp)
             t2new[ki, kj, ka] += tmp
-
+    
+            #t2new[ki,kj,kb] -= tmp.transpose(0,1,3,2)
             Ftmp = Fvv[ka] - 0.5 * einsum('ma,me->ae', t1[ka], Fov[ka])
             tmp = einsum('ijbe,ae->ijab', t2[ki, kj, kb], Ftmp)
             t2new[ki, kj, ka] -= tmp
-
+    
             Ftmp = Foo[kj] + 0.5 * einsum('je,me->mj', t1[kj], Fov[kj])
             tmp = einsum('imab,mj->ijab', t2[ki, kj, ka], Ftmp)
             t2new[ki, kj, ka] -= tmp
-
+    
+            #t2new[kj,ki,ka] += tmp.transpose(1,0,2,3)
             Ftmp = Foo[ki] + 0.5 * einsum('ie,me->mi', t1[ki], Fov[ki])
             tmp = einsum('jmab,mi->ijab', t2[kj, ki, ka], Ftmp)
             t2new[ki, kj, ka] += tmp
@@ -245,20 +185,18 @@ def update_amps(cc, t1, t2, eris):
             # Wmbej
             #     - km - kb + ke + kj = 0
             #  => ke = km - kj + kb
-            if (not do_cc2):
-                ke = kconserv[km, kj, kb]
-                tmp = einsum('imae,mbej->ijab', t2[ki, km, ka], Wovvo[km, kb, ke])
-                #     - km - kb + ke + kj = 0
-                # =>  ke = km - kj + kb
-                #
-                # t[i,e] => ki = ke
-                # t[m,a] => km = ka
-                if km == ka and ke == ki:
-                    tmp -= einsum('ie,ma,mbej->ijab', t1[ki], t1[km], eris_ovvo[km, kb, ke])
+            ke = kconserv[km, kj, kb]
+            if (cc.cc2):
+                tmp = numpy.zeros_like(t2[ki,km,ka])
             else:
-                if km == ka and ke == ki:
-                    tmp = -einsum('ie,ma,mbej->ijab', t1[ki], t1[km], eris_ovvo[km, kb, ke])
-
+                tmp = einsum('imae,mbej->ijab', t2[ki, km, ka], Wovvo[km, kb, ke])
+            #     - km - kb + ke + kj = 0
+            # =>  ke = km - kj + kb
+            #
+            # t[i,e] => ki = ke
+            # t[m,a] => km = ka
+            if km == ka and ke == ki:
+                tmp -= einsum('ie,ma,mbej->ijab', t1[ki], t1[km], eris_ovvo[km, kb, ke])
             t2new[ki, kj, ka] += tmp
             t2new[ki, kj, kb] -= tmp.transpose(0, 1, 3, 2)
             t2new[kj, ki, ka] -= tmp.transpose(1, 0, 2, 3)
@@ -417,13 +355,14 @@ def spin2spatial(tx, orbspin, kconserv):
 
 
 class GCCSD(gccsd.GCCSD):
-    def __init__(self, mf, frozen=0, mo_coeff=None, mo_occ=None):
+    def __init__(self, mf, frozen=0, mo_coeff=None, mo_occ=None, cc2=False):
         assert (isinstance(mf, scf.khf.KSCF))
         if not isinstance(mf, scf.kghf.KGHF):
             mf = scf.addons.convert_to_ghf(mf)
         self.kpts = mf.kpts
         self.khelper = kpts_helper.KptsHelper(mf.cell, mf.kpts)
         gccsd.GCCSD.__init__(self, mf, frozen, mo_coeff, mo_occ)
+        self.cc2 = cc2
 
     @property
     def nkpts(self):
@@ -641,7 +580,13 @@ def _make_eris_incore(cc, mo_coeff=None):
     # FIXME: Whether to add this correction for other exxdiv treatments?
     # Without the correction, MP2 energy may be largely off the correct value.
     madelung = tools.madelung(cell, kpts)
-    eris.mo_energy = [_adjust_occ(mo_e, nocc, -madelung)
+
+    ### JOONHO REMOVE THIS ADJUSTMENT
+    if (cc.cc2):
+        eris.mo_energy = [mo_e
+                          for k, mo_e in enumerate(eris.mo_energy)]
+    else:
+        eris.mo_energy = [_adjust_occ(mo_e, nocc, -madelung)
                       for k, mo_e in enumerate(eris.mo_energy)]
 
     # Get location of padded elements in occupied and virtual space.
@@ -893,25 +838,43 @@ if __name__ == '__main__':
     from pyscf.pbc import gto, scf, cc
 
     cell = gto.Cell()
-    cell.atom='''
-    C 0.000000000000   0.000000000000   0.000000000000
-    C 1.685068664391   1.685068664391   1.685068664391
-    '''
+    # cell.atom='''
+    # C 0.000000000000   0.000000000000   0.000000000000
+    # C 1.685068664391   1.685068664391   1.685068664391
+    # '''
+    # cell.basis = 'gth-szv'
+    # cell.pseudo = 'gth-pade'
+    # cell.a = '''
+    # 0.000000000, 3.370137329, 3.370137329
+    # 3.370137329, 0.000000000, 3.370137329
+    # 3.370137329, 3.370137329, 0.000000000'''
+    # cell.unit = 'B'
+    
+    cell.atom = [['Si', numpy.array([0., 0., 0.])], ['C', numpy.array([2.05507701, 2.05507701, 2.05507701])]]
+    cell.a = numpy.array([[0.        , 4.11015403, 4.11015403],
+        [4.11015403, 0.        , 4.11015403],
+        [4.11015403, 4.11015403, 0.        ]])
+    cell.mesh = [30]*3
     cell.basis = 'gth-szv'
     cell.pseudo = 'gth-pade'
-    cell.a = '''
-    0.000000000, 3.370137329, 3.370137329
-    3.370137329, 0.000000000, 3.370137329
-    3.370137329, 3.370137329, 0.000000000'''
     cell.unit = 'B'
+
     cell.verbose = 5
     cell.build()
 
     # Running HF and CCSD with 1x1x2 Monkhorst-Pack k-point mesh
-    kmf = scf.KRHF(cell, kpts=cell.make_kpts([1,1,2]), exxdiv=None)
+    # kmf = scf.KRHF(cell, kpts=cell.make_kpts([1,1,2]), exxdiv=None)
+    kmf = scf.KRHF(cell, kpts=cell.make_kpts([1,1,1]), exxdiv=None)
+    kmf.conv_tol=1e-12
+    kmf.max_cycle=100
+    # kmf = scf.KRHF(cell, kpts=cell.make_kpts([1,1,1]), exxdiv=None)
     ehf = kmf.kernel()
     kmf = scf.addons.convert_to_ghf(kmf)
 
     mycc = KGCCSD(kmf)
+    mycc.max_cycle=100
+    mycc.conv_tol=1e-7
     ecc, t1, t2 = mycc.kernel()
     print(ecc - -0.155298393321855)
+    # E(GCCSD) = -7.510753267131808  E_corr = -0.1512901600270146
+
