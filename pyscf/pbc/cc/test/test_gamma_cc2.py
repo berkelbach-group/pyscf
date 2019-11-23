@@ -14,6 +14,7 @@ def main():
     # from pyscf.pbc.cc import eom_kccsd_ghf as eom_kgccsd
     from pyscf.pbc.tools.pbc import super_cell
     from pyscf.cc.rccsd import RCCSD
+    from pyscf.cc.uccsd import UCCSD
     from pyscf.pbc.cc.kccsd import KGCCSD
     from pyscf.pbc.cc.kccsd_rhf import KRCCSD
     from pyscf.pbc.cc.kccsd_uhf import KUCCSD
@@ -58,8 +59,10 @@ def main():
 
     cell.build()
 
+    exxdiv = 'ewald'
+
     # Gamma-point RHF
-    mf = scf.RHF(cell, exxdiv=None)
+    mf = scf.RHF(cell, exxdiv=exxdiv)
     mf.conv_tol = 1e-12
     mf.max_cycle = 100
     mf.verbose=5
@@ -70,14 +73,16 @@ def main():
 
     cc2 = True
 
-    mycc = mol_rccsd.RCCSD(mf)
+    # mycc = mol_rccsd.RCCSD(mf)
+    mf = scf.addons.convert_to_uhf(mf)
+    mycc = UCCSD(mf)
     mycc.conv_tol = 1e-12
     mycc.max_cycle = 100
     mycc.verbose=5
     mycc.cc2 = cc2
     ercc, t1, t2 = mycc.kernel()
 
-    kmf0 = scf.KRHF(cell, kpts=cell.make_kpts([1,1,1]), exxdiv=None)
+    kmf0 = scf.KRHF(cell, kpts=cell.make_kpts([1,1,1]), exxdiv=exxdiv)
     kmf0.conv_tol=1e-12
     kmf0.max_cycle=100
     kmf0.kernel()
@@ -87,17 +92,20 @@ def main():
 
     mycc.max_cycle=100
     mycc.conv_tol=1e-12
+    mycc.keep_exxdiv = True
     ecc, t1, t2 = mycc.kernel()
     print("E(KGCCSD) = {}".format(ecc))
 
     kmf = scf.addons.convert_to_uhf(kmf0)
     mycc = KUCCSD(kmf, cc2=cc2)
+    mycc.keep_exxdiv = True
     mycc.max_cycle=100
     mycc.conv_tol=1e-12
     ecc, t1, t2 = mycc.kernel()
     print("E(KUCCSD) = {}".format(ecc))
 
     mycc = KRCCSD(kmf0, cc2=cc2)
+    mycc.keep_exxdiv = True
     mycc.max_cycle=100
     mycc.conv_tol=1e-12
     ecc, t1, t2 = mycc.kernel()

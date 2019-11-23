@@ -871,7 +871,9 @@ def _kuccsd_eris_common_(cc, eris, buf=None):
     # Re-make our fock MO matrix elements from density and fock AO
     dm = cc._scf.make_rdm1(cc.mo_coeff, cc.mo_occ)
     hcore = cc._scf.get_hcore()
-    with lib.temporary_env(cc._scf, exxdiv=None):
+
+    exxdiv = cc._scf.exxdiv if cc.keep_exxdiv else None
+    with lib.temporary_env(cc._scf, exxdiv=exxdiv):
         vhf = cc._scf.get_veff(cell, dm)
     focka = [reduce(np.dot, (mo.conj().T, hcore[k]+vhf[0][k], mo))
              for k, mo in enumerate(mo_a)]

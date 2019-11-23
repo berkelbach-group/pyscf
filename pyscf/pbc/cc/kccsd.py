@@ -363,6 +363,7 @@ class GCCSD(gccsd.GCCSD):
         self.khelper = kpts_helper.KptsHelper(mf.cell, mf.kpts)
         gccsd.GCCSD.__init__(self, mf, frozen, mo_coeff, mo_occ)
         self.cc2 = cc2
+        self.keep_exxdiv = False
 
     @property
     def nkpts(self):
@@ -565,7 +566,8 @@ def _make_eris_incore(cc, mo_coeff=None):
 
     # Re-make our fock MO matrix elements from density and fock AO
     dm = cc._scf.make_rdm1(cc.mo_coeff, cc.mo_occ)
-    with lib.temporary_env(cc._scf, exxdiv=None):
+    exxdiv = cc._scf.exxdiv if cc.keep_exxdiv else None
+    with lib.temporary_env(cc._scf, exxdiv=exxdiv):
         # _scf.exxdiv affects eris.fock. HF exchange correction should be
         # excluded from the Fock matrix.
         fockao = cc._scf.get_hcore() + cc._scf.get_veff(cell, dm)
