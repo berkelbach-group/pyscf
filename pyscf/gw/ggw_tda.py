@@ -18,7 +18,7 @@
 #
 
 '''
-G0W0 approximation based on iterative (matrix-vector) diagonalization
+G0W0 approximation with TDA screening based on iterative diagonalization
 '''
 
 import time
@@ -38,7 +38,8 @@ from pyscf import __config__
 einsum = lib.einsum
 
 
-def kernel(gw, nroots=1, koopmans=True, guess=None, eris=None, **kwargs):
+def kernel(gw, nroots=1, koopmans=True, guess=None, eris=None, 
+           **kwargs):
     cput0 = (time.clock(), time.time())
     log = logger.Logger(gw.stdout, gw.verbose)
     if gw.verbose >= logger.WARN:
@@ -48,43 +49,81 @@ def kernel(gw, nroots=1, koopmans=True, guess=None, eris=None, **kwargs):
     if eris is None:
         eris = gw.ao2mo()
 
-    matvec, diag = gw.gen_matvec(eris)
-
-    size = gw.vector_size()
-    nroots = min(nroots, size)
-    if guess is not None:
-        user_guess = True
-        for g in guess:
-            assert g.size == size
-    else:
-        user_guess = False
-        guess = gw.get_init_guess(nroots, koopmans, diag)
-
-    def precond(r, e0, x0):
-        return r/(e0-diag+1e-12)
-
     # GHF or customized RHF/UHF may be of complex type
     real_system = (gw._scf.mo_coeff[0].dtype == np.double)
 
-    eig = lib.davidson_nosym1
-    if user_guess or koopmans:
-        assert len(guess) == nroots
-        def eig_close_to_init_guess(w, v, nroots, envs):
-            x0 = lib.linalg_helper._gen_x0(envs['v'], envs['xs'])
-            s = np.dot(np.asarray(guess).conj(), np.asarray(x0).T)
-            snorm = np.einsum('pi,pi->i', s.conj(), s)
-            idx = np.argsort(-snorm)[:nroots]
-            return lib.linalg_helper._eigs_cmplx2real(w, v, idx, real_system)
-        conv, es, vs = eig(matvec, guess, precond, pick=eig_close_to_init_guess,
-                           tol=gw.conv_tol, max_cycle=gw.max_cycle,
-                           max_space=gw.max_space, nroots=nroots, verbose=log)
+    if gw.diagonal is False: 
+        matvec, diag = gw.gen_matvec(eris=eris)
+
+        size = gw.vector_size()
+        nroots = min(nroots, size)
+        if guess is not None:
+            user_guess = True
+            for g in guess:
+                assert g.size == size
+        else:
+            user_guess = False
+            guess = gw.get_init_guess(nroots=nroots, koopmans=koopmans, diag=diag)
+
+        def precond(r, e0, x0):
+            return r/(e0-diag+1e-12)
+
+        eig = lib.davidson_nosym1
+        if user_guess or koopmans:
+            assert len(guess) == nroots
+            def eig_close_to_init_guess(w, v, nroots, envs):
+                x0 = lib.linalg_helper._gen_x0(envs['v'], envs['xs'])
+                s = np.dot(np.asarray(guess).conj(), np.asarray(x0).T)
+                snorm = np.einsum('pi,pi->i', s.conj(), s)
+                idx = np.argsort(-snorm)[:nroots]
+                return lib.linalg_helper._eigs_cmplx2real(w, v, idx, real_system)
+            conv, es, vs = eig(matvec, guess, precond, pick=eig_close_to_init_guess,
+                               tol=gw.conv_tol, max_cycle=gw.max_cycle,
+                               max_space=gw.max_space, nroots=nroots, verbose=log)
+        else:
+            def pickeig(w, v, nroots, envs):
+                real_idx = np.where(abs(w.imag) < 1e-3)[0]
+                return lib.linalg_helper._eigs_cmplx2real(w, v, real_idx, real_system)
+            conv, es, vs = eig(matvec, guess, precond, pick=pickeig,
+                               tol=gw.conv_tol, max_cycle=gw.max_cycle,
+                               max_space=gw.max_space, nroots=nroots, verbose=log)
+
     else:
-        def pickeig(w, v, nroots, envs):
-            real_idx = np.where(abs(w.imag) < 1e-3)[0]
-            return lib.linalg_helper._eigs_cmplx2real(w, v, real_idx, real_system)
-        conv, es, vs = eig(matvec, guess, precond, pick=pickeig,
-                           tol=gw.conv_tol, max_cycle=gw.max_cycle,
-                           max_space=gw.max_space, nroots=nroots, verbose=log)
+        conv = list()
+        es = list()
+        vs = list()
+        size = gw.vector_size()
+        nroots_ = 1
+        for diag_idx in gw.diag_idxs:
+            matvec, diag = gw.gen_matvec(eris=eris, diag_idx=diag_idx)
+            guess = gw.get_init_guess(nroots=1, diag=diag, diag_idx=diag_idx)
+
+            def precond(r, e0, x0):
+                return r/(e0-diag+1e-12)
+
+            eig = lib.davidson_nosym1
+            def eig_close_to_init_guess(w, v, nroots_, envs):
+                x0 = lib.linalg_helper._gen_x0(envs['v'], envs['xs'])
+                s = np.dot(np.asarray(guess).conj(), np.asarray(x0).T)
+                snorm = np.einsum('pi,pi->i', s.conj(), s)
+                idx = np.argsort(-snorm)[:nroots_]
+                return lib.linalg_helper._eigs_cmplx2real(w, v, idx, real_system)
+            convn, en, vn = eig(matvec, guess, precond, pick=eig_close_to_init_guess,
+                                tol=gw.conv_tol, max_cycle=gw.max_cycle,
+                                max_space=gw.max_space, nroots=nroots_, verbose=log)
+            #def pickeig(w, v, nroots_, envs):
+            #    real_idx = np.where(abs(w.imag) < 1e-3)[0]
+            #    return lib.linalg_helper._eigs_cmplx2real(w, v, real_idx, real_system)
+            #convn, en, vn = eig(matvec, guess, precond, pick=pickeig,
+            #                    tol=gw.conv_tol, max_cycle=gw.max_cycle,
+            #                    max_space=gw.max_space, nroots=nroots_, verbose=log)
+
+            conv.append(convn[0])
+            es.append(en[0])
+            vs.append(vn[0])
+        conv = np.asarray(conv)
+        es = np.asarray(es)
+        vs = np.asarray(vs)
 
     if gw.verbose >= logger.INFO:
         for n, en, vn, convn in zip(range(nroots), es, vs, conv):
@@ -118,6 +157,65 @@ def amplitudes_to_vector(r1ip, r1ea, r2ip, r2ea):
     return vector
 
 
+def matvec_diag(gw, vector, diag_idx, eris=None):
+    '''matrix-vector multiplication in the diagonal approximation'''
+    if eris is None: eris = gw.ao2mo()
+    nocc = gw.nocc
+    nmo = gw.nmo
+
+    r1ip, r1ea, r2ip, r2ea = vector_to_amplitudes(vector, nmo, nocc)
+
+    mo_e_occ = eris.mo_energy[:nocc]
+    mo_e_vir = eris.mo_energy[nocc:]
+    vk_occ = eris.vk[:nocc,:nocc]
+    vxc_occ = eris.vxc[:nocc,:nocc]
+    vk_vir = eris.vk[nocc:,nocc:]
+    vxc_vir = eris.vxc[nocc:,nocc:]
+
+    if diag_idx < nocc:
+        occ_idx = diag_idx
+
+        Hr1ip  = einsum('i,i->i', mo_e_occ, r1ip) 
+        Hr1ip -= einsum('ii,i->i', vk_occ, r1ip) 
+        Hr1ip -= einsum('ii,i->i', vxc_occ, r1ip) 
+        Hr1ip[occ_idx] += einsum('klc,klc', eris.ooov[:,:,occ_idx,:], r2ip)
+        Hr1ip[occ_idx] += einsum('kcd,kcd', eris.oovv[:,occ_idx,:,:].conj(), r2ea)
+
+        Hr1ea = np.zeros_like(r1ea) 
+        
+        Hr2ip = eris.ooov[:,:,occ_idx,:].conj()*r1ip[occ_idx]
+        
+        Hr2ea = eris.oovv[:,occ_idx,:,:]*r1ip[occ_idx]
+
+    else:
+        vir_idx = diag_idx - nocc
+
+        Hr1ip = np.zeros_like(r1ip)
+
+        Hr1ea = einsum('a,a->a', mo_e_vir, r1ea)
+        Hr1ea -= einsum('aa,a->a', vk_vir, r1ea)
+        Hr1ea -= einsum('aa,a->a', vxc_vir, r1ea)
+        Hr1ea[vir_idx] += einsum('klc,klc', eris.oovv[:,:,vir_idx,:], r2ip)
+        Hr1ea[vir_idx] += einsum('kcd,kcd', eris.ovvv[:,vir_idx,:,:].conj(), r2ea)
+        
+        Hr2ip = eris.oovv[:,:,vir_idx,:].conj()*r1ea[vir_idx]
+        
+        Hr2ea = eris.ovvv[:,vir_idx,:,:]*r1ea[vir_idx]
+
+    Hr2ip += einsum('i,ija->ija', mo_e_occ, r2ip)
+    Hr2ip += einsum('j,ija->ija', mo_e_occ, r2ip)
+    Hr2ip -= einsum('a,ija->ija', mo_e_vir, r2ip)
+    Hr2ip -= einsum('jcal,ilc->ija', eris.ovvo, r2ip)
+
+    Hr2ea += einsum('a,iab->iab', mo_e_vir, r2ea)
+    Hr2ea += einsum('b,iab->iab', mo_e_vir, r2ea)
+    Hr2ea -= einsum('i,iab->iab', mo_e_occ, r2ea)
+    Hr2ea += einsum('icak,kcb->iab', eris.ovvo, r2ea)
+
+    vector = amplitudes_to_vector(Hr1ip, Hr1ea, Hr2ip, Hr2ea)
+    return vector
+
+
 def matvec(gw, vector, eris=None):
     if eris is None: eris = gw.ao2mo()
     nocc = gw.nocc
@@ -132,25 +230,16 @@ def matvec(gw, vector, eris=None):
     vxc_occ = eris.vxc[:nocc,:nocc]
     vxc_vir = eris.vxc[nocc:,nocc:]
 
-    DIAG = True
-
+    # r1-r1 update is the full fock matrix in the chosen mean-field basis
     Hr1ip  = einsum('i,i->i', mo_e_occ, r1ip) 
-    if DIAG:
-        Hr1ip -= einsum('ii,i->i', vk_occ, r1ip) 
-        Hr1ip -= einsum('ii,i->i', vxc_occ, r1ip) 
-    else:
-        Hr1ip -= einsum('ij,j->i', vk_occ, r1ip) 
-        Hr1ip -= einsum('ij,j->i', vxc_occ, r1ip) 
+    Hr1ip -= einsum('ij,j->i', vk_occ, r1ip) 
+    Hr1ip -= einsum('ij,j->i', vxc_occ, r1ip) 
     Hr1ip += einsum('klic,klc->i', eris.ooov, r2ip)
     Hr1ip += einsum('kicd,kcd->i', eris.oovv.conj(), r2ea)
 
     Hr1ea = einsum('a,a->a', mo_e_vir, r1ea)
-    if DIAG:
-        Hr1ea -= einsum('aa,a->a', vk_vir, r1ea)
-        Hr1ea -= einsum('aa,a->a', vxc_vir, r1ea)
-    else:
-        Hr1ea -= einsum('ab,b->a', vk_vir, r1ea)
-        Hr1ea -= einsum('ab,b->a', vxc_vir, r1ea)
+    Hr1ea -= einsum('ab,b->a', vk_vir, r1ea)
+    Hr1ea -= einsum('ab,b->a', vxc_vir, r1ea)
     Hr1ea += einsum('klac,klc->a', eris.oovv, r2ip)
     Hr1ea += einsum('kacd,kcd->a', eris.ovvv.conj(), r2ea)
     
@@ -173,9 +262,23 @@ def matvec(gw, vector, eris=None):
 
 
 class GW(lib.StreamObject):
-    '''Non-relativistic generalized G0W0
+    '''generalized (spin-orbital) G0W0 with TDA screening
+
+    Attributes:
+        diagonal : bool
+            Whether to use the diagonal approximation to the Green's function and 
+            self-energy.  Default is False.
+
+    Saved results:
+        converged : bool
+            Whether GW roots are converged or not
+        e : float
+            GW eigenvalues (IP or EA)
+        v : float
+            GW eigenvectors in 1p+1h+2p1h+2h1p space
+
     '''
-    def __init__(self, mf, frozen=None, mo_coeff=None, mo_occ=None):
+    def __init__(self, mf, frozen=None, diagonal=False, mo_coeff=None, mo_occ=None):
         assert(isinstance(mf, scf.ghf.GHF) or isinstance(mf, dft.gks.GKS))
         if mo_coeff  is None: mo_coeff  = mf.mo_coeff
         if mo_occ    is None: mo_occ    = mf.mo_occ
@@ -191,6 +294,7 @@ class GW(lib.StreamObject):
         self.conv_tol = getattr(__config__, 'eom_rccsd_EOM_conv_tol', 1e-7)
 
         self.frozen = frozen
+        self.diagonal = diagonal
 ##################################################
 # don't modify the following attributes, they are not input options
         self.converged = False
@@ -203,12 +307,12 @@ class GW(lib.StreamObject):
         self._keys = set(self.__dict__.keys())
 
     def dump_flags(self, verbose=None):
-        #log = logger.new_logger(self, verbose)
         logger.info(self, '')
         logger.info(self, '******** %s ********', self.__class__)
-        #logger.info('nocc = %s, nmo = %s', self.nocc, self.nmo)
+        logger.info(self, 'nocc = %s, nmo = %s', self.nocc, self.nmo)
         if self.frozen is not None:
-            logger.info('frozen orbitals %s', self.frozen)
+            logger.info(self, 'frozen orbitals %s', self.frozen)
+        logger.info(self, 'diagonal approx = %d', self.diagonal)
         logger.info(self, 'max_space = %d', self.max_space)
         logger.info(self, 'max_cycle = %d', self.max_cycle)
         logger.info(self, 'conv_tol = %s', self.conv_tol)
@@ -216,19 +320,25 @@ class GW(lib.StreamObject):
                     self.max_memory, lib.current_memory()[0])
         return self
 
-    def kernel(self, nroots=1, eris=None):
+    def kernel(self, nroots=1, koopmans=True, guess=None, eris=None):
         if eris is None: 
             eris = self.ao2mo(self.mo_coeff)
-        self.converged, self.e, self.v = kernel(self, nroots=nroots, eris=eris) 
+        self.converged, self.e, self.v = \
+                kernel(self, nroots, koopmans, guess, eris)
         return self.e, self.v
 
     matvec = matvec
+    matvec_diag = matvec_diag
 
-    def gen_matvec(self, eris=None):
+    def gen_matvec(self, eris=None, diag_idx=None):
+        # diag_idx triggers the diagonal approximation
         if eris is None:
             eris = self.ao2mo()
         diag = self.get_diag()
-        matvec = lambda xs: [self.matvec(x, eris) for x in xs]
+        if diag_idx is None:
+            matvec = lambda xs: [self.matvec(x, eris=eris) for x in xs]
+        else:
+            matvec = lambda xs: [self.matvec_diag(x, diag_idx, eris=eris) for x in xs]
         return matvec, diag
 
     def vector_to_amplitudes(self, vector, nmo=None, nocc=None):
@@ -300,12 +410,21 @@ class GW(lib.StreamObject):
 
 class GWIP(GW):
 
-    def get_init_guess(self, nroots=1, koopmans=True, diag=None):
+    def kernel(self, nroots=1, koopmans=True, guess=None, eris=None):
+        if self.diagonal:
+            self.diag_idxs = np.arange(self.nocc-nroots,self.nocc)
+        return GW.kernel(self, nroots, koopmans, guess, eris)
+
+    def get_init_guess(self, nroots=1, koopmans=True, diag=None, diag_idx=None):
         size = self.vector_size()
         dtype = getattr(diag, 'dtype', np.double)
         nroots = min(nroots, size)
         guess = []
-        if koopmans:
+        if diag_idx is not None:
+            g = np.zeros(int(size), dtype)
+            g[diag_idx] = 1.0
+            guess.append(g)
+        elif koopmans:
             for n in range(nroots):
                 g = np.zeros(int(size), dtype)
                 g[self.nocc-n-1] = 1.0
@@ -322,12 +441,21 @@ class GWIP(GW):
 
 class GWEA(GW):
 
-    def get_init_guess(self, nroots=1, koopmans=True, diag=None):
+    def kernel(self, nroots=1, koopmans=True, guess=None, eris=None):
+        if self.diagonal:
+            self.diag_idxs = np.arange(self.nocc,self.nocc+nroots)
+        return GW.kernel(self, nroots, koopmans, guess, eris)
+
+    def get_init_guess(self, nroots=1, koopmans=True, diag=None, diag_idx=None):
         size = self.vector_size()
         dtype = getattr(diag, 'dtype', np.double)
         nroots = min(nroots, size)
         guess = []
-        if koopmans:
+        if diag_idx is not None:
+            g = np.zeros(int(size), dtype)
+            g[diag_idx] = 1.0
+            guess.append(g)
+        elif koopmans:
             for n in range(nroots):
                 g = np.zeros(int(size), dtype)
                 g[self.nocc+n] = 1.0
@@ -447,7 +575,7 @@ def _make_eris_incore(mygw, mo_coeff=None, ao2mofn=None):
 if __name__ == '__main__':
     from pyscf import gto
     mol = gto.Mole()
-    mol.verbose = 0
+    mol.verbose = 5
     mol.atom = [
         [8 , (0. , 0.     , 0.)],
         [1 , (0. , -0.757 , 0.587)],
@@ -461,26 +589,24 @@ if __name__ == '__main__':
 
     gw = GWIP(mf)
     eip,v = gw.kernel(nroots=6)
-
     gw = GWEA(mf)
     eea,v = gw.kernel(nroots=6)
 
     print("EIP =", eip)
     print("EEA =", eea)
 
-    print(eip[-1] - -0.40986000004366957)
-    print(eip[-3] - -0.48524655758347784)
-    print(eip[-5] - -0.6699279585527715)
-    print(eea[0] - 0.2544676075076162)
-    print(eea[2] - 0.34901293602250677)
-    print(eea[4] - 1.1427379448996156)
+    print(eip[-1] - -0.40985983)
+    print(eip[-3] - -0.48524616)
+    print(eip[-5] - -0.66992763)
+    print(eea[0] - 0.2544674)
+    print(eea[2] - 0.3490127)
+    print(eea[4] - 1.14273785)
 
     mf.xc = 'lda'
     mf.kernel()
 
     gw = GWIP(mf)
     eip,v = gw.kernel(nroots=2)
-
     gw = GWEA(mf)
     eea,v = gw.kernel(nroots=2)
 
@@ -488,4 +614,19 @@ if __name__ == '__main__':
     print("EEA =", eea)
 
     print(eip[-1] - -0.34807392)
-    print(eea[0] - 0.24821382)
+    print(eea[0] - 0.24634391)
+
+    gw = GWIP(mf, diagonal=True)
+    eip,v = gw.kernel(nroots=6)
+    gw = GWEA(mf, diagonal=True)
+    eea,v = gw.kernel(nroots=6)
+
+    print("EIP =", eip)
+    print("EEA =", eea)
+
+    print(eip[-1] - -0.34689902)
+    print(eip[-3] - -0.41397304)
+    print(eip[-5] - -0.63174713)
+    print(eea[0] - 0.24847212)
+    print(eea[2] - 0.33801657)
+    print(eea[4] - 1.11568186)
