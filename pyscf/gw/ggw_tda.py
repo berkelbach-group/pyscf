@@ -441,7 +441,6 @@ def _make_eris_incore(mygw, mo_coeff=None, ao2mofn=None):
     eris.ovov = eri[:nocc,nocc:,:nocc,nocc:].copy()
     eris.ovvo = eri[:nocc,nocc:,nocc:,:nocc].copy()
     eris.ovvv = eri[:nocc,nocc:,nocc:,nocc:].copy()
-    eris.vvvv = eri[nocc:,nocc:,nocc:,nocc:].copy()
     return eris
 
 
