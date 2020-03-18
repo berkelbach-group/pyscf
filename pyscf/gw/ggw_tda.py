@@ -21,8 +21,8 @@
 G0W0 approximation based on iterative (matrix-vector) diagonalization
 '''
 
-from functools import reduce
 import time
+from functools import reduce
 import numpy
 import numpy as np
 
@@ -125,30 +125,47 @@ def matvec(gw, vector, eris=None):
 
     r1ip, r1ea, r2ip, r2ea = vector_to_amplitudes(vector, nmo, nocc)
 
-    fock = eris.fock
-    foo = fock[:nocc,:nocc]
-    fvv = fock[nocc:,nocc:]
+    mo_e_occ = eris.mo_energy[:nocc]
+    mo_e_vir = eris.mo_energy[nocc:]
+    vk_occ = eris.vk[:nocc,:nocc]
+    vk_vir = eris.vk[nocc:,nocc:]
+    vxc_occ = eris.vxc[:nocc,:nocc]
+    vxc_vir = eris.vxc[nocc:,nocc:]
 
-    Hr1ip  = einsum('ii,i->i', foo, r1ip) 
+    DIAG = True
+
+    Hr1ip  = einsum('i,i->i', mo_e_occ, r1ip) 
+    if DIAG:
+        Hr1ip -= einsum('ii,i->i', vk_occ, r1ip) 
+        Hr1ip -= einsum('ii,i->i', vxc_occ, r1ip) 
+    else:
+        Hr1ip -= einsum('ij,j->i', vk_occ, r1ip) 
+        Hr1ip -= einsum('ij,j->i', vxc_occ, r1ip) 
     Hr1ip += einsum('klic,klc->i', eris.ooov, r2ip)
     Hr1ip += einsum('kicd,kcd->i', eris.oovv.conj(), r2ea)
 
-    Hr1ea = einsum('aa,a->a', fvv, r1ea)
+    Hr1ea = einsum('a,a->a', mo_e_vir, r1ea)
+    if DIAG:
+        Hr1ea -= einsum('aa,a->a', vk_vir, r1ea)
+        Hr1ea -= einsum('aa,a->a', vxc_vir, r1ea)
+    else:
+        Hr1ea -= einsum('ab,b->a', vk_vir, r1ea)
+        Hr1ea -= einsum('ab,b->a', vxc_vir, r1ea)
     Hr1ea += einsum('klac,klc->a', eris.oovv, r2ip)
     Hr1ea += einsum('kacd,kcd->a', eris.ovvv.conj(), r2ea)
     
     Hr2ip = einsum('ijka,k->ija', eris.ooov.conj(), r1ip)
     Hr2ip += einsum('ijba,b->ija', eris.oovv.conj(), r1ea)
-    Hr2ip += einsum('ii,ija->ija', foo, r2ip)
-    Hr2ip += einsum('jj,ija->ija', foo, r2ip)
-    Hr2ip -= einsum('aa,ija->ija', fvv, r2ip)
+    Hr2ip += einsum('i,ija->ija', mo_e_occ, r2ip)
+    Hr2ip += einsum('j,ija->ija', mo_e_occ, r2ip)
+    Hr2ip -= einsum('a,ija->ija', mo_e_vir, r2ip)
     Hr2ip -= einsum('jcal,ilc->ija', eris.ovvo, r2ip)
     
     Hr2ea = einsum('icab,c->iab', eris.ovvv, r1ea)
     Hr2ea += einsum('ijab,j->iab', eris.oovv, r1ip)
-    Hr2ea += einsum('aa,iab->iab', fvv, r2ea)
-    Hr2ea += einsum('bb,iab->iab', fvv, r2ea)
-    Hr2ea -= einsum('ii,iab->iab', foo, r2ea)
+    Hr2ea += einsum('a,iab->iab', mo_e_vir, r2ea)
+    Hr2ea += einsum('b,iab->iab', mo_e_vir, r2ea)
+    Hr2ea -= einsum('i,iab->iab', mo_e_occ, r2ea)
     Hr2ea += einsum('icak,kcb->iab', eris.ovvo, r2ea)
 
     vector = amplitudes_to_vector(Hr1ip, Hr1ea, Hr2ip, Hr2ea)
@@ -232,21 +249,20 @@ class GW(lib.StreamObject):
             eris = self.ao2mo()
         nocc = self.nocc
         nvir = self.nmo - nocc
-        fock = eris.fock
-        foo = fock[:nocc,:nocc]
-        fvv = fock[nocc:,nocc:]
-        Hr1ip = np.diag(foo)
-        Hr1ea = np.diag(fvv)
+        mo_e_occ = eris.mo_energy[:nocc]
+        mo_e_vir = eris.mo_energy[nocc:]
+        Hr1ip = mo_e_occ + np.diag(eris.vk - eris.vxc)[:nocc]
+        Hr1ea = mo_e_vir + np.diag(eris.vk - eris.vxc)[nocc:]
         Hr2ip = np.zeros((nocc,nocc,nvir))
         Hr2ea = np.zeros((nocc,nvir,nvir))
         for i in range(nocc):
             for j in range(nocc):
                 for a in range(nvir):
-                    Hr2ip[i,j,a] = foo[i,i] + foo[j,j] - fvv[a,a]
+                    Hr2ip[i,j,a] = mo_e_occ[i] + mo_e_occ[j] - mo_e_vir[a]
         for i in range(nocc):
             for a in range(nvir):
                 for b in range(nvir):
-                    Hr2ea[i,a,b] = fvv[a,a] + fvv[b,b] - foo[i,i]
+                    Hr2ea[i,a,b] = mo_e_vir[a] + mo_e_vir[b] - mo_e_occ[i]
 
         return self.amplitudes_to_vector(Hr1ip, Hr1ea, Hr2ip, Hr2ea)
 
@@ -360,16 +376,23 @@ class _PhysicistsERIs:
                 mo_coeff = lib.tag_array(mo_coeff, orbspin=self.orbspin)
         self.mo_coeff = mo_coeff
 
-        # Note: Recomputed fock matrix since SCF may not be fully converged.
+        self.mo_energy = mygw._scf.mo_energy
         dm = mygw._scf.make_rdm1(mygw.mo_coeff, mygw.mo_occ)
-        vhf = mygw._scf.get_veff(mygw.mol, dm)
-        fockao = mygw._scf.get_fock(vhf=vhf, dm=dm)
-        self.fock = reduce(np.dot, (mo_coeff.conj().T, fockao, mo_coeff))
-        self.e_hf = mygw._scf.energy_tot(dm=dm, vhf=vhf)
+        vj, vk = mygw._scf.get_jk(mygw.mol, dm) 
+        vj = reduce(np.dot, (mo_coeff.conj().T, vj, mo_coeff))
+        self.vk = reduce(np.dot, (mo_coeff.conj().T, vk, mo_coeff))
+        vxc = mygw._scf.get_veff(mygw.mol, dm)
+        self.vxc = reduce(np.dot, (mo_coeff.conj().T, vxc, mo_coeff)) - vj
+        # Note: Recomputed fock matrix since SCF may not be fully converged.
+        #dm = mygw._scf.make_rdm1(mygw.mo_coeff, mygw.mo_occ)
+        #vhf = mygw._scf.get_veff(mygw.mol, dm)
+        #fockao = mygw._scf.get_fock(vhf=vhf, dm=dm)
+        #self.fock = reduce(np.dot, (mo_coeff.conj().T, fockao, mo_coeff))
+        #self.e_hf = mygw._scf.energy_tot(dm=dm, vhf=vhf)
         self.nocc = mygw.nocc
         self.mol = mygw.mol
 
-        mo_e = self.mo_energy = self.fock.diagonal().real
+        mo_e = self.mo_energy
         gap = abs(mo_e[:self.nocc,None] - mo_e[None,self.nocc:]).min()
         if gap < 1e-5:
             logger.warn(mygw, 'HOMO-LUMO gap %s too small for GCCSD', gap)
@@ -425,14 +448,12 @@ def _make_eris_incore(mygw, mo_coeff=None, ao2mofn=None):
 if __name__ == '__main__':
     from pyscf import gto
     mol = gto.Mole()
-    mol.verbose = 5
+    mol.verbose = 0
     mol.atom = [
         [8 , (0. , 0.     , 0.)],
         [1 , (0. , -0.757 , 0.587)],
         [1 , (0. , 0.757  , 0.587)]]
     mol.basis = '321g'
-    #mol.atom = [['He', (0,0,0)]]
-    #mol.basis = 'def2tzvpp'
     mol.build()
 
     mf = scf.GKS(mol)
@@ -454,3 +475,18 @@ if __name__ == '__main__':
     print(eea[0] - 0.2544676075076162)
     print(eea[2] - 0.34901293602250677)
     print(eea[4] - 1.1427379448996156)
+
+    mf.xc = 'lda'
+    mf.kernel()
+
+    gw = GWIP(mf)
+    eip,v = gw.kernel(nroots=2)
+
+    gw = GWEA(mf)
+    eea,v = gw.kernel(nroots=2)
+
+    print("EIP =", eip)
+    print("EEA =", eea)
+
+    print(eip[-1] - -0.34807392)
+    print(eea[0] - 0.24821382)
