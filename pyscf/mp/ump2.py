@@ -104,6 +104,123 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2, verbos
 
     return emp2.real, t2
 
+def energy_ss_os_multireg(mp, mo_energy=None, mo_coeff=None, kappa=None, eris=None, with_t2=WITH_T2, verbose=None):
+    """Computes UMP2 energy and several other components at once, including 
+    its same-spin component, its opposite-spin component, and regularized MP2 energies with multiple kappas.
+    
+    Arguments:
+        mp {[type]} -- [description]
+    
+    Keyword Arguments:
+        mo_energy {[type]} -- [description] (default: {None})
+        mo_coeff {[type]} -- [description] (default: {None})
+        kappa {list} -- specify a list of kappas (default: {None})
+        eris {[type]} -- [description] (default: {None})
+        with_t2 {[type]} -- [description] (default: {WITH_T2})
+        verbose {[type]} -- [description] (default: {None})
+    
+    Returns:
+        tuple -- (emp2, emp2_same_spin, emp2_opposite_spin, emp2_regularized, t2)
+    """
+    if mo_energy is not None or mo_coeff is not None:
+        # For backward compatibility.  In pyscf-1.4 or earlier, mp.frozen is
+        # not supported when mo_energy or mo_coeff is given.
+        assert(mp.frozen == 0 or mp.frozen is None)
+
+    if eris is None:
+        eris = mp.ao2mo(mo_coeff)
+
+    if mo_energy is None:
+        mo_energy = eris.mo_energy
+
+    if kappa is None:
+        kappa = [1.45]
+    nkappa = len(kappa)
+    print("kappa(s):", kappa)
+
+    nocca, noccb = mp.get_nocc()
+    nmoa, nmob = mp.get_nmo()
+    nvira, nvirb = nmoa-nocca, nmob-noccb
+    mo_ea, mo_eb = mo_energy
+    eia_a = mo_ea[:nocca,None] - mo_ea[None,nocca:]
+    eia_b = mo_eb[:noccb,None] - mo_eb[None,noccb:]
+
+    if with_t2:
+        dtype = eris.ovov.dtype
+        t2aa = numpy.empty((nocca,nocca,nvira,nvira), dtype=dtype)
+        t2ab = numpy.empty((nocca,noccb,nvira,nvirb), dtype=dtype)
+        t2bb = numpy.empty((noccb,noccb,nvirb,nvirb), dtype=dtype)
+        t2 = (t2aa,t2ab,t2bb)
+    else:
+        t2 = None
+
+    emp2 = 0.0
+    emp2_ss = 0.0
+    emp2_os = 0.0
+    emp2_reg = numpy.zeros(nkappa)
+
+    for i in range(nocca):
+        if isinstance(eris.ovov, numpy.ndarray) and eris.ovov.ndim == 4:
+            # When mf._eri is a custom integrals wiht the shape (n,n,n,n), the
+            # ovov integrals might be in a 4-index tensor.
+            eris_ovov = eris.ovov[i]
+        else:
+            eris_ovov = numpy.asarray(eris.ovov[i*nvira:(i+1)*nvira])
+
+        eris_ovov = eris_ovov.reshape(nvira,nocca,nvira).transpose(1,0,2)
+        denom_i = lib.direct_sum('a+jb->jab', eia_a[i], eia_a)
+        t2i = eris_ovov.conj()/denom_i
+        emp2_ss += numpy.einsum('jab,jab', t2i, eris_ovov) * .5
+        emp2_ss -= numpy.einsum('jab,jba', t2i, eris_ovov) * .5
+        if with_t2:
+            t2aa[i] = t2i - t2i.transpose(0,2,1)
+
+        denom_i_reg = numpy.kron(kappa, denom_i).reshape(nocca, nvira, nkappa, nvira).transpose(2,0,1,3)
+        t2i_reg =  eris_ovov.conj()[None,:]*((1. - numpy.exp(denom_i_reg))**2)/denom_i[None,:]
+        emp2_reg += numpy.einsum('kjab,jab', t2i_reg, eris_ovov) * .5
+        emp2_reg -= numpy.einsum('kjab,jba', t2i_reg, eris_ovov) * .5
+        
+        if isinstance(eris.ovOV, numpy.ndarray) and eris.ovOV.ndim == 4:
+            # When mf._eri is a custom integrals wiht the shape (n,n,n,n), the
+            # ovov integrals might be in a 4-index tensor.
+            eris_ovov = eris.ovOV[i]
+        else:
+            eris_ovov = numpy.asarray(eris.ovOV[i*nvira:(i+1)*nvira])
+        eris_ovov = eris_ovov.reshape(nvira,noccb,nvirb).transpose(1,0,2)
+        denom_i = lib.direct_sum('a+jb->jab', eia_a[i], eia_b)
+        t2i = eris_ovov.conj()/denom_i
+        emp2_os += numpy.einsum('JaB,JaB', t2i, eris_ovov)
+        if with_t2:
+            t2ab[i] = t2i
+
+        denom_i_reg = numpy.kron(kappa, denom_i).reshape(noccb, nvira, nkappa, nvirb).transpose(2,0,1,3)
+        t2i_reg =  eris_ovov.conj()[None,:]*((1. - numpy.exp(denom_i_reg))**2)/denom_i[None,:]
+        emp2_reg += numpy.einsum('kJaB,JaB', t2i_reg, eris_ovov)
+
+    for i in range(noccb):
+        if isinstance(eris.OVOV, numpy.ndarray) and eris.OVOV.ndim == 4:
+            # When mf._eri is a custom integrals wiht the shape (n,n,n,n), the
+            # ovov integrals might be in a 4-index tensor.
+            eris_ovov = eris.OVOV[i]
+        else:
+            eris_ovov = numpy.asarray(eris.OVOV[i*nvirb:(i+1)*nvirb])
+        eris_ovov = eris_ovov.reshape(nvirb,noccb,nvirb).transpose(1,0,2)
+        denom_i = lib.direct_sum('a+jb->jab', eia_b[i], eia_b)
+        t2i = eris_ovov.conj()/denom_i
+        emp2_ss += numpy.einsum('jab,jab', t2i, eris_ovov) * .5
+        emp2_ss -= numpy.einsum('jab,jba', t2i, eris_ovov) * .5
+        if with_t2:
+            t2bb[i] = t2i - t2i.transpose(0,2,1)
+
+        denom_i_reg = numpy.kron(kappa, denom_i).reshape(noccb, nvirb, nkappa, nvirb).transpose(2,0,1,3)
+        t2i_reg =  eris_ovov.conj()[None,:]*((1. - numpy.exp(denom_i_reg))**2)/denom_i[None,:]
+        emp2_reg += numpy.einsum('kjab,jab', t2i_reg, eris_ovov) * .5
+        emp2_reg -= numpy.einsum('kjab,jba', t2i_reg, eris_ovov) * .5
+
+    emp2 = emp2_ss + emp2_os
+
+    return emp2.real, emp2_ss.real, emp2_os.real, emp2_reg.real, t2
+
 def energy(mp, t2, eris):
     '''MP2 energy'''
     t2aa, t2ab, t2bb = t2
@@ -443,6 +560,9 @@ class UMP2(mp2.MP2):
     update_amps = update_amps
     def init_amps(self, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2):
         return kernel(self, mo_energy, mo_coeff, eris, with_t2)
+
+    # For all-in-one MP2 (e_mp2, same-spin comp, opposite-spin comp, regularized)
+    energy_allinone = energy_ss_os_multireg
 
 MP2 = UMP2
 
