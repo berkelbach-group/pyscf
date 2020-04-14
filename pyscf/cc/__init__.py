@@ -76,7 +76,7 @@ from pyscf.cc import eom_uccsd
 from pyscf.cc import eom_gccsd
 from pyscf import scf
 
-def CCSD(mf, frozen=0, mo_coeff=None, mo_occ=None):
+def CCSD(mf, frozen=None, mo_coeff=None, mo_occ=None):
     __doc__ = ccsd.CCSD.__doc__
     if isinstance(mf, scf.uhf.UHF):
         return UCCSD(mf, frozen, mo_coeff, mo_occ)
@@ -88,7 +88,7 @@ def CCSD(mf, frozen=0, mo_coeff=None, mo_occ=None):
 scf.hf.SCF.CCSD = CCSD
 
 
-def RCCSD(mf, frozen=0, mo_coeff=None, mo_occ=None):
+def RCCSD(mf, frozen=None, mo_coeff=None, mo_occ=None):
     __doc__ = ccsd.CCSD.__doc__
     import numpy
     from pyscf import lib
@@ -116,7 +116,7 @@ def RCCSD(mf, frozen=0, mo_coeff=None, mo_occ=None):
         return ccsd.CCSD(mf, frozen, mo_coeff, mo_occ)
 
 
-def UCCSD(mf, frozen=0, mo_coeff=None, mo_occ=None):
+def UCCSD(mf, frozen=None, mo_coeff=None, mo_occ=None):
     __doc__ = uccsd.UCCSD.__doc__
     from pyscf.soscf import newton_ah
 
@@ -129,7 +129,7 @@ def UCCSD(mf, frozen=0, mo_coeff=None, mo_occ=None):
         return uccsd.UCCSD(mf, frozen, mo_coeff, mo_occ)
 
 
-def GCCSD(mf, frozen=0, mo_coeff=None, mo_occ=None):
+def GCCSD(mf, frozen=None, mo_coeff=None, mo_occ=None):
     __doc__ = gccsd.GCCSD.__doc__
     from pyscf.soscf import newton_ah
 
@@ -140,3 +140,38 @@ def GCCSD(mf, frozen=0, mo_coeff=None, mo_occ=None):
         raise NotImplementedError('DF-GCCSD')
     else:
         return gccsd.GCCSD(mf, frozen, mo_coeff, mo_occ)
+
+
+def FNOCCSD(mf, thresh=1e-6, pct_occ=None, nvir_act=None):
+    """Frozen natural orbital CCSD
+
+    Attributes:
+        thresh : float
+            Threshold on NO occupation numbers.  Default is 1e-6.
+        pct_occ : float
+            Percentage of total occupation number.  Default is None.  If present, overrides `thresh`.
+    """
+    #from pyscf import mp
+    #pt = mp.MP2(mf).set(verbose=0).run()
+    from pyscf.mp.mp2 import MP2
+    pt = MP2(mf).set(verbose=0).run()
+    frozen, no_coeff = pt.make_fno(thresh=thresh, pct_occ=pct_occ, nvir_act=nvir_act)
+    #pt_no = mp.MP2(mf, frozen=frozen, mo_coeff=no_coeff).set(verbose=0).run() #avoid DF
+    pt_no = MP2(mf, frozen=frozen, mo_coeff=no_coeff).set(verbose=0).run()
+    mycc = ccsd.CCSD(mf, frozen=frozen, mo_coeff=no_coeff) #avoid DF
+    mycc.delta_emp2 = pt.e_corr - pt_no.e_corr
+    from pyscf.lib import logger
+    def _finalize(self):
+        '''Hook for dumping results and clearing up the object.'''
+        if self.converged:
+            logger.info(self, 'FNO-%s converged', self.__class__.__name__)
+        else:
+            logger.note(self, 'FNO-%s not converged', self.__class__.__name__)
+        logger.note(self, 'E(FNO-%s) = %.16g  E_corr = %.16g',
+                    self.__class__.__name__, self.e_tot, self.e_corr)
+        logger.note(self, 'E(FNO-%s+delta-MP2) = %.16g  E_corr = %.16g',
+                    self.__class__.__name__, self.e_tot+self.delta_emp2, 
+                    self.e_corr+self.delta_emp2)
+        return self
+    mycc._finalize = _finalize.__get__(mycc, mycc.__class__)
+    return mycc

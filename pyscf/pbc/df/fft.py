@@ -191,6 +191,7 @@ class FFTDF(lib.StreamObject):
     def reset(self, cell=None):
         if cell is not None:
             self.cell = cell
+        self.grids.reset(cell)
         self._rsh_df = {}
         return self
 
@@ -323,7 +324,7 @@ class FFTDF(lib.StreamObject):
         ao_pairs_G = self.get_ao_pairs_G(kpts0, compact=True)
         ao_pairs_G *= numpy.sqrt(coulG*(self.cell.vol/ngrids**2)).reshape(-1,1)
 
-        Lpq = numpy.empty((self.blockdim, ao_pairs_G.shape[1]))
+        Lpq = numpy.empty((blksize, ao_pairs_G.shape[1]))
         for p0, p1 in lib.prange(0, ngrids, blksize):
             Lpq[:p1-p0] = ao_pairs_G[p0:p1].real
             yield Lpq[:p1-p0]

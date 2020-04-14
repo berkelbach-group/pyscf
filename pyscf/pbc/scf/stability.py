@@ -31,7 +31,7 @@ import scipy.linalg
 from pyscf import lib
 from pyscf.lib import logger
 from pyscf.pbc.scf import newton_ah
-from pyscf.pbc.scf.newton_ah import _gen_rhf_response, _gen_uhf_response
+from pyscf.pbc.scf import _response_functions
 
 def rhf_stability(mf, internal=True, external=False, verbose=None):
     mo_i = mo_e = None
@@ -68,10 +68,10 @@ def rhf_internal(mf, verbose=None):
     x0[g!=0] = 1. / hdiag[g!=0]
     e, v = lib.davidson(hessian_x, x0, precond, tol=1e-4, verbose=log)
     if e < -1e-5:
-        log.log('KRHF/KRKS wavefunction has an internal instablity')
+        log.log('KRHF/KRKS wavefunction has an internal instability')
         mo = _rotate_mo(mf.mo_coeff, mf.mo_occ, v)
     else:
-        log.log('KRHF/KRKS wavefunction is stable in the intenral stability analysis')
+        log.log('KRHF/KRKS wavefunction is stable in the internal stability analysis')
         mo = mf.mo_coeff
     return mo
 
@@ -118,7 +118,7 @@ def _gen_hop_rhf_external(mf, verbose=None):
              for k in range(nkpts)]
     hdiag = numpy.hstack([x.ravel() for x in hdiag])
 
-    vresp1 = _gen_rhf_response(mf, singlet=False, hermi=1)
+    vresp1 = mf.gen_response(singlet=False, hermi=1)
     def hop_rhf2uhf(x1):
         x1 = _unpack(x1, mo_occ)
         dmvo = []
@@ -156,7 +156,7 @@ def rhf_external(mf, verbose=None):
     x0[hdiag2>1e-5] = 1. / hdiag2[hdiag2>1e-5]
     e3, v3 = lib.davidson(hop2, x0, precond, tol=1e-4, verbose=log)
     if e3 < -1e-5:
-        log.log('KRHF/KRKS wavefunction has an KRHF/KRKS -> KUHF/KUKS instablity.')
+        log.log('KRHF/KRKS wavefunction has an KRHF/KRKS -> KUHF/KUKS instability.')
         mo = (_rotate_mo(mf.mo_coeff, mf.mo_occ, v3), mf.mo_coeff)
     else:
         log.log('KRHF/KRKS wavefunction is stable in the KRHF/KRKS -> KUHF/KUKS stability analysis')
@@ -177,12 +177,12 @@ def uhf_internal(mf, verbose=None):
     x0[g!=0] = 1. / hdiag[g!=0]
     e, v = lib.davidson(hessian_x, x0, precond, tol=1e-4, verbose=log)
     if e < -1e-5:
-        log.log('KUHF/KUKS wavefunction has an internal instablity.')
+        log.log('KUHF/KUKS wavefunction has an internal instability.')
         tot_x_a = sum((occ>0).sum()*(occ==0).sum() for occ in mf.mo_occ[0])
         mo = (_rotate_mo(mf.mo_coeff[0], mf.mo_occ[0], v[:tot_x_a]),
               _rotate_mo(mf.mo_coeff[1], mf.mo_occ[1], v[tot_x_a:]))
     else:
-        log.log('KUHF/KUKS wavefunction is stable in the intenral stability analysis')
+        log.log('KUHF/KUKS wavefunction is stable in the internal stability analysis')
         mo = mf.mo_coeff
     return mo
 
@@ -222,7 +222,7 @@ def _gen_hop_uhf_external(mf, verbose=None):
     hdiagba = [fvvb[k].diagonal().real[:,None] - fooa[k].diagonal().real for k in range(nkpts)]
     hdiag2 = numpy.hstack([x.ravel() for x in (hdiagab + hdiagba)])
 
-    vresp1 = _gen_uhf_response(mf, with_j=False, hermi=0)
+    vresp1 = mf.gen_response(with_j=False, hermi=0)
     def hop_uhf2ghf(x1):
         x1ab = []
         x1ba = []
@@ -275,7 +275,7 @@ def uhf_external(mf, verbose=None):
     log.debug('uhf_external: lowest eigs of H = %s', e3)
     mo = None
     if e3 < -1e-5:
-        log.log('KUHF/KUKS wavefunction has an KUHF/KUKS -> KGHF/KGKS instablity.')
+        log.log('KUHF/KUKS wavefunction has an KUHF/KUKS -> KGHF/KGKS instability.')
     else:
         log.log('KUHF/KUKS wavefunction is stable in the KUHF/KUKS -> KGHF/KGKS stability analysis')
     return mo

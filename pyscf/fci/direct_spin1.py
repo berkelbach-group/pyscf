@@ -274,7 +274,7 @@ def energy(h1e, eri, fcivec, norb, nelec, link_index=None):
 
 
 def make_rdm1s(fcivec, norb, nelec, link_index=None):
-    '''Spin separated 1-particle density matrices.
+    r'''Spin separated 1-particle density matrices.
     The return values include two density matrices: (alpha,alpha), (beta,beta)
 
     dm1[p,q] = <q^\dagger p>
@@ -295,7 +295,7 @@ def make_rdm1s(fcivec, norb, nelec, link_index=None):
     return rdm1a, rdm1b
 
 def make_rdm1(fcivec, norb, nelec, link_index=None):
-    '''Spin-traced one-particle density matrix
+    r'''Spin-traced one-particle density matrix
 
     dm1[p,q] = <q_alpha^\dagger p_alpha> + <q_beta^\dagger p_beta>
 
@@ -522,6 +522,15 @@ def kernel_ms1(fci, h1e, eri, norb, nelec, ci0=None, link_index=None,
             ci0 = [ci0.ravel()]
         else:
             ci0 = [x.ravel() for x in ci0]
+        # Add vectors if not enough initial guess is given
+        if len(ci0) < nroots:
+            if callable(getattr(fci, 'get_init_guess', None)):
+                ci0.extend(fci.get_init_guess(norb, nelec, nroots, hdiag)[len(ci0):])
+            else:
+                for i in range(len(ci0), nroots):
+                    x = numpy.zeros(na*nb)
+                    x[addr[i]] = 1
+                    ci0.append(x)
 
     if tol is None: tol = fci.conv_tol
     if lindep is None: lindep = fci.lindep

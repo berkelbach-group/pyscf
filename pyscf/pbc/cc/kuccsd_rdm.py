@@ -139,7 +139,7 @@ def _make_rdm1(mycc, d1, with_frozen=True, ao_repr=False):
     for k in range(nkpts):
         dm1b[k][numpy.diag_indices(noccb)] +=1
 
-    if with_frozen and not (mycc.frozen is 0 or mycc.frozen is None):
+    if with_frozen and mycc.frozen is not None:
         raise NotImplementedError
         _, nmoa = mycc.mo_occ[0].size
         _, nmob = mycc.mo_occ[1].size
@@ -159,8 +159,8 @@ def _make_rdm1(mycc, d1, with_frozen=True, ao_repr=False):
 
     if ao_repr:
         mo_a, mo_b = mycc.mo_coeff
-        dm1a = lib.einsum('xpi,xij,xqj->xpq', mo_a, dm1a, mo_a)
-        dm1b = lib.einsum('xpi,xij,xqj->xpq', mo_b, dm1b, mo_b)
+        dm1a = lib.einsum('xpi,xij,xqj->xpq', mo_a, dm1a, mo_a.conj())
+        dm1b = lib.einsum('xpi,xij,xqj->xpq', mo_b, dm1b, mo_b.conj())
     return dm1a, dm1b
 
 

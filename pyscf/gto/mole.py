@@ -16,6 +16,11 @@
 # Author: Qiming Sun <osirpt.sun@gmail.com>
 #
 
+'''
+Mole class and helper functions to handle paramters and attributes for GTO
+integrals. This module serves the interface to the integral library libcint.
+'''
+
 import os, sys
 import types
 import re
@@ -40,7 +45,8 @@ from pyscf.gto.ecp import core_configuration
 from pyscf import __config__
 
 from pyscf.data.elements import ELEMENTS, ELEMENTS_PROTON, \
-        _rm_digit, charge, _symbol, _std_symbol, _atom_symbol, is_ghost_atom
+        _rm_digit, charge, _symbol, _std_symbol, _atom_symbol, is_ghost_atom, \
+        _std_symbol_without_ghost
 
 # For code compatibility in python-2 and python-3
 if sys.version_info >= (3,):
@@ -51,7 +57,7 @@ if sys.version_info >= (3,):
 CHARGE_OF  = 0
 PTR_COORD  = 1
 NUC_MOD_OF = 2
-PTR_ZETA   = 3
+PTR_ZETA   = PTR_FRAC_CHARGE = 3
 ATM_SLOTS  = 6
 ATOM_OF    = 0
 ANG_OF     = 1
@@ -78,6 +84,9 @@ PTR_ENV_START   = 20
 # parameters from libcint
 NUC_POINT = 1
 NUC_GAUSS = 2
+# nucleus with fractional charges. It can be used to mimic MM particles
+NUC_FRAC_CHARGE = 3
+NUC_ECP = 4  # atoms with pseudo potential
 
 BASE = getattr(__config__, 'BASE', 0)
 
@@ -139,7 +148,8 @@ def cart2sph(l, c_tensor=None, normalized=None):
     Kwargs:
         normalized :
             How the Cartesian GTOs are normalized.  'sp' means the s and p
-            functions are normalized.
+            functions are normalized (this is the convention used by libcint
+            library).
     '''
     nf = (l+1)*(l+2)//2
     if c_tensor is None:
@@ -169,7 +179,8 @@ def cart2spinor_kappa(kappa, l=None, normalized=None):
     Kwargs:
         normalized :
             How the Cartesian GTOs are normalized.  'sp' means the s and p
-            functions are normalized.
+            functions are normalized (this is the convention used by libcint
+            library).
     '''
     if kappa < 0:
         l = -kappa - 1
@@ -202,7 +213,14 @@ def cart2spinor_kappa(kappa, l=None, normalized=None):
 cart2j_kappa = cart2spinor_kappa
 
 def cart2spinor_l(l, normalized=None):
-    '''Cartesian to spinor transformation matrix for angular moment l'''
+    '''Cartesian to spinor transformation matrix for angular moment l
+
+    Kwargs:
+        normalized :
+            How the Cartesian GTOs are normalized.  'sp' means the s and p
+            functions are normalized (this is the convention used by libcint
+            library).
+    '''
     return cart2spinor_kappa(0, l, normalized)
 cart2j_l = cart2spinor_l
 
@@ -304,7 +322,8 @@ def format_atom(atoms, origin=0, axes=None,
             try:
                 atoms = fromfile(atoms)
             except ValueError:
-                pass
+                sys.stderr.write('\nFailed to parse geometry file  %s\n\n' % atoms)
+                raise
 
         atoms = str(atoms.replace(';','\n').replace(',',' ').replace('\t',' '))
         fmt_atoms = []
@@ -394,14 +413,10 @@ def format_basis(basis_tab):
             return basis.load(basis_name, symb)
 
     fmt_basis = {}
-    for atom in basis_tab:
+    for atom, atom_basis in basis_tab.items():
         symb = _atom_symbol(atom)
-        stdsymb = _std_symbol(symb)
-        if stdsymb[:2] == 'X-':
-            stdsymb = stdsymb[2:]
-        if stdsymb[:6] == 'GHOST-':
-            stdsymb = stdsymb[6:]
-        atom_basis = basis_tab[atom]
+        stdsymb = _std_symbol_without_ghost(symb)
+
         if isinstance(atom_basis, (str, unicode)):
             bset = convert(str(atom_basis), stdsymb)
         elif (any(isinstance(x, (str, unicode)) for x in atom_basis)
@@ -510,19 +525,20 @@ def format_ecp(ecp_tab):
        ...}
     '''
     fmt_ecp = {}
-    for atom in ecp_tab.keys():
+    for atom, atom_ecp in ecp_tab.items():
         symb = _atom_symbol(atom)
-        stdsymb = _std_symbol(symb)
-        if isinstance(ecp_tab[atom], (str, unicode)):
-            ecp_dat = basis.load_ecp(str(ecp_tab[atom]), stdsymb)
+
+        if isinstance(atom_ecp, (str, unicode)):
+            stdsymb = _std_symbol_without_ghost(symb)
+            ecp_dat = basis.load_ecp(str(atom_ecp), stdsymb)
             if ecp_dat is None or len(ecp_dat) == 0:
                 #raise RuntimeError('ECP not found for  %s' % symb)
                 sys.stderr.write('ECP %s not found for  %s\n' %
-                                 (ecp_tab[atom], symb))
+                                 (atom_ecp, symb))
             else:
                 fmt_ecp[symb] = ecp_dat
         else:
-            fmt_ecp[symb] = ecp_tab[atom]
+            fmt_ecp[symb] = atom_ecp
     return fmt_ecp
 
 # transform etb to basis format
@@ -603,7 +619,18 @@ def conc_env(atm1, bas1, env1, atm2, bas2, env2):
 def conc_mol(mol1, mol2):
     '''Concatenate two Mole objects.
     '''
+    if not mol1._built:
+        logger.warn(mol1, 'Warning: object %s not initialized. Initializing %s',
+                    mol1, mol1)
+        mol1.build()
+    if not mol2._built:
+        logger.warn(mol2, 'Warning: object %s not initialized. Initializing %s',
+                    mol2, mol2)
+        mol2.build()
+
     mol3 = Mole()
+    mol3._built = True
+
     mol3._atm, mol3._bas, mol3._env = \
             conc_env(mol1._atm, mol1._bas, mol1._env,
                      mol2._atm, mol2._bas, mol2._env)
@@ -625,28 +652,26 @@ def conc_mol(mol1, mol2):
     mol3.output = mol1.output
     mol3.max_memory = mol1.max_memory
     mol3.charge = mol1.charge + mol2.charge
-    mol3.spin = mol1.spin + mol2.spin
+    mol3.spin = abs(mol1.spin - mol2.spin)
     mol3.symmetry = False
     mol3.symmetry_subgroup = None
     mol3.cart = mol1.cart and mol2.cart
-    mol3._atom = mol1._atom + mol2._atom
-    mol3.unit = mol1.unit
-    mol3._basis = dict(mol2._basis)
-    mol3._basis.update(mol1._basis)
 
-    mol3._pseudo.update(mol1._pseudo)
+    mol3._atom = mol1._atom + mol2._atom
+    mol3.atom = mol3._atom
+    mol3.unit = 'Bohr'
+
+    mol3._basis.update(mol2._basis)
+    mol3._basis.update(mol1._basis)
     mol3._pseudo.update(mol2._pseudo)
-    mol3._ecp.update(mol1._ecp)
+    mol3._pseudo.update(mol1._pseudo)
     mol3._ecp.update(mol2._ecp)
+    mol3._ecp.update(mol1._ecp)
+    mol3.basis = mol3._basis
+    mol3.ecp = mol3._ecp
 
     mol3.nucprop.update(mol1.nucprop)
     mol3.nucprop.update(mol2.nucprop)
-
-    if not mol1._built:
-        logger.warn(mol1, 'Warning: intor envs of %s not initialized.', mol1)
-    if not mol2._built:
-        logger.warn(mol2, 'Warning: intor envs of %s not initialized.', mol2)
-    mol3._built = mol1._built or mol2._built
     return mol3
 
 # <bas-of-mol1|intor|bas-of-mol2>
@@ -895,6 +920,7 @@ def make_ecp_env(mol, _atm, ecp, pre_env=[]):
                 ecp0 = None
             if ecp0 is not None:
                 _atm[ia,CHARGE_OF ] = charge(symb) - ecp0[0]
+                _atm[ia,NUC_MOD_OF] = NUC_ECP
                 b = ecp0[1].copy().reshape(-1,BAS_SLOTS)
                 b[:,ATOM_OF] = ia
                 _ecpbas.append(b)
@@ -925,7 +951,12 @@ def tot_electrons(mol):
     else:
         nelectron = sum(charge(a[0]) for a in format_atom(mol.atom))
     nelectron -= mol.charge
-    return int(nelectron)
+    nelectron_int = int(round(nelectron))
+
+    if abs(nelectron - nelectron_int) > 1e-4:
+        logger.warn(mol, 'Found fractional number of electrons %f. Round it to %d',
+                   nelectron, nelectron_int)
+    return nelectron_int
 
 def copy(mol):
     '''Deepcopy of the given :class:`Mole` object
@@ -1256,7 +1287,7 @@ def energy_nuc(mol, charges=None, coords=None):
         float
     '''
     if charges is None: charges = mol.atom_charges()
-    if len(charges) == 0:
+    if len(charges) <= 1:
         return 0
     #e = 0
     #for j in range(len(mol._atm)):
@@ -1577,8 +1608,29 @@ def aoslice_by_atom(mol, ao_loc=None):
     aorange = numpy.empty((mol.natm,4), dtype=int)
     bas_atom = mol._bas[:,ATOM_OF]
     delimiter = numpy.where(bas_atom[0:-1] != bas_atom[1:])[0] + 1
-    aorange[:,0] = shell_start = numpy.append(0, delimiter)
-    aorange[:,1] = shell_end = numpy.append(delimiter, mol.nbas)
+
+    if mol.natm == len(delimiter) + 1:
+        aorange[:,0] = shell_start = numpy.append(0, delimiter)
+        aorange[:,1] = shell_end = numpy.append(delimiter, mol.nbas)
+
+    else:  # Some atoms miss basis
+        shell_start = numpy.empty(mol.natm, dtype=int)
+        shell_start[:] = -1
+        shell_start[0] = 0
+        shell_start[bas_atom[0]] = 0
+        shell_start[bas_atom[delimiter]] = delimiter
+
+        shell_end = numpy.empty(mol.natm, dtype=int)
+        shell_end[0] = 0
+        shell_end[bas_atom[delimiter-1]] = delimiter
+        shell_end[bas_atom[-1]] = mol.nbas
+
+        for i in range(1, mol.natm):
+            if shell_start[i] == -1:
+                shell_start[i] = shell_end[i] = shell_end[i-1]
+
+    aorange[:,0] = shell_start
+    aorange[:,1] = shell_end
     aorange[:,2] = ao_loc[shell_start]
     aorange[:,3] = ao_loc[shell_end]
     return aorange
@@ -2113,7 +2165,9 @@ class Mole(lib.StreamObject):
         if method is None:
             raise AttributeError('Mole object has no attribute %s' % key)
 
-        mf.run()
+        # Initialize SCF object for post-SCF methods if applicable
+        if self.nelectron != 0:
+            mf.run()
         return method
 
 # need "deepcopy" here because in shallow copy, _env may get new elements but
@@ -2196,7 +2250,7 @@ class Mole(lib.StreamObject):
         if nucmod is not None: self.nucmod = nucmod
         if ecp is not None: self.ecp = ecp
         if charge is not None: self.charge = charge
-        if spin is not 0: self.spin = spin
+        if spin != 0: self.spin = spin
         if symmetry is not None: self.symmetry = symmetry
         if symmetry_subgroup is not None: self.symmetry_subgroup = symmetry_subgroup
         if cart is not None: self.cart = cart
@@ -2240,11 +2294,14 @@ class Mole(lib.StreamObject):
 
 # TODO: Consider ECP info in point group symmetry initialization
         if self.ecp:
+            # Unless explicitly input, ECP should not be assigned to ghost atoms
             if isinstance(self.ecp, (str, unicode)):
-                _ecp = dict([(a, str(self.ecp)) for a in uniq_atoms])
+                _ecp = dict([(a, str(self.ecp))
+                             for a in uniq_atoms if not is_ghost_atom(a)])
             elif 'default' in self.ecp:
                 default_ecp = self.ecp['default']
-                _ecp = dict(((a, default_ecp) for a in uniq_atoms))
+                _ecp = dict(((a, default_ecp)
+                             for a in uniq_atoms if not is_ghost_atom(a)))
                 _ecp.update(self.ecp)
                 del(_ecp['default'])
             else:
@@ -2639,14 +2696,14 @@ class Mole(lib.StreamObject):
         zeta0 = self._env[PTR_RINV_ZETA].copy()
         return _TemporaryMoleContext(self.set_rinv_zeta, (zeta,), (zeta0,))
 
-    def with_rinv_as_nucleus(self, atm_id):
+    def with_rinv_at_nucleus(self, atm_id):
         '''Retuen a temporary mol context in which the rinv operator (1/r) is
         treated like the Coulomb potential of a Gaussian charge distribution
         rho(r) = Norm * exp(-zeta * r^2) at the place of the input atm_id.
 
         Examples:
 
-        >>> with mol.with_rinv_as_nucleus(3):
+        >>> with mol.with_rinv_at_nucleus(3):
         ...     mol.intor('int1e_rinv')
         '''
         zeta = self._env[self._atm[atm_id,PTR_ZETA]]
@@ -2662,6 +2719,7 @@ class Mole(lib.StreamObject):
                 self._env[PTR_RINV_ZETA] = z
                 self._env[PTR_RINV_ORIG:PTR_RINV_ORIG+3] = r
             return _TemporaryMoleContext(set_rinv, (zeta,rinv), (zeta0,rinv0))
+    with_rinv_as_nucleus = with_rinv_at_nucleus  # For backward compatibility
 
     def set_geom_(self, atoms_or_coords, unit=None, symmetry=None,
                   inplace=True):
@@ -2777,11 +2835,24 @@ class Mole(lib.StreamObject):
         >>> mol.atom_charge(1)
         17
         '''
-        return self._atm[atm_id,CHARGE_OF]
+        if self._atm[atm_id,NUC_MOD_OF] != NUC_FRAC_CHARGE:
+            # regular QM atoms
+            return self._atm[atm_id,CHARGE_OF]
+        else:
+            # MM atoms with fractional charges
+            return self._env[self._atm[atm_id,PTR_FRAC_CHARGE]]
 
     def atom_charges(self):
         '''np.asarray([mol.atom_charge(i) for i in range(mol.natm)])'''
-        return self._atm[:,CHARGE_OF]
+        z = self._atm[:,CHARGE_OF]
+        if numpy.any(self._atm[:,NUC_MOD_OF] == NUC_FRAC_CHARGE):
+            # Create the integer nuclear charges first then replace the MM
+            # particles with the MM charges that saved in _env[PTR_FRAC_CHARGE]
+            z = numpy.array(z, dtype=numpy.double)
+            idx = self._atm[:,NUC_MOD_OF] == NUC_FRAC_CHARGE
+            # MM fractional charges can be positive or negative
+            z[idx] = self._env[self._atm[idx,PTR_FRAC_CHARGE]]
+        return z
 
     def atom_nelec_core(self, atm_id):
         '''Number of core electrons for pseudo potential.
@@ -3208,6 +3279,7 @@ class Mole(lib.StreamObject):
                 argument can be one of 'sp', 'all', None.  'sp' means the Cartesian s
                 and p basis are normalized.  'all' means all Cartesian functions are
                 normalized.  None means none of the Cartesian functions are normalized.
+                The default value 'sp' is the convention used by libcint library.
 
         Examples:
 
