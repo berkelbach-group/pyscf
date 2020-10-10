@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2020 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import scipy.linalg
 from pyscf import gto
 from pyscf import lib
 import pyscf.lib.parameters as param
+from pyscf.lib.exceptions import BasisNotFoundError
 
 mol0 = gto.Mole()
 mol0.atom = [
@@ -220,7 +221,7 @@ C    SP
         mol1.output = '/dev/null'
         mol1.build(False, False)
         self.assertAlmostEqual(lib.fp(gto.inertia_moment(mol1)),
-                               2.139593709454326, 9)
+                               5.340587366981696, 9)
 
         mass = mol0.atom_mass_list(isotope_avg=True)
         self.assertAlmostEqual(lib.fp(gto.inertia_moment(mol1, mass)),
@@ -786,7 +787,7 @@ O    SP
         mol1.build(False, False)
         gto.basis.load_ecp('lanl08', 'O')
         gto.format_ecp({'O':'lanl08', 1:'lanl2dz'})
-        self.assertRaises(KeyError, gto.format_ecp, {'H':'lan2ldz'})
+        self.assertRaises(BasisNotFoundError, gto.format_ecp, {'H':'lan2ldz'})
 
     def test_condense_to_shell(self):
         mol1 = mol0.copy()
@@ -862,7 +863,7 @@ O    SP
         mol2.cart = True
         self.assertEqual(mol2.npgto_nr(), 100)
 
-    def test_intor_cross(self):
+    def test_intor_cross_cart(self):
         mol1 = gto.M(atom='He', basis={'He': [(2,(1.,1))]}, cart=True)
         s0 = gto.intor_cross('int1e_ovlp', mol1, mol0)
         self.assertEqual(s0.shape, (6, 34))
@@ -962,6 +963,52 @@ H           1.00000        1.00000        0.00000
         v = mol.intor('int1e_nuc')
         self.assertAlmostEqual(abs(ref-v).max(), 0, 12)
 
+    def test_fromstring(self):
+        mol = gto.Mole()
+        mol.fromstring('2\n\nH 0 0 1\nH 0 -1 0')
+        print(mol._atom == [('H', [0.0, 0.0, 1.8897261245650618]), ('H', [0.0, -1.8897261245650618, 0.0])])
+        print(mol.atom == [('H', [0.0, 0.0, 1.0]), ('H', [0.0, -1.0, 0.0])])
+        print(mol.unit == 'Angstrom')
+
+    def test_fromfile(self):
+        with tempfile.NamedTemporaryFile(mode='w+', suffix='.xyz') as f:
+            f.write('2\n\nH 0 0 1; H 0 -1 0')
+            f.flush()
+            mol = gto.Mole()
+            mol.fromfile(f.name)
+            print(mol._atom == [('H', [0.0, 0.0, 1.8897261245650618]), ('H', [0.0, -1.8897261245650618, 0.0])])
+            print(mol.atom == [('H', [0.0, 0.0, 1.0]), ('H', [0.0, -1.0, 0.0])])
+            print(mol.unit == 'Angstrom')
+
+    def test_uncontract(self):
+        basis = gto.basis.parse('''
+H    S
+0.9  0.8  0
+0.5  0.5  0.6
+0.3  0.5  0.8
+H    S
+0.3  1
+H    P
+0.9  0.6
+0.5  0.6
+0.3  0.6
+''')
+        self.assertEqual(gto.uncontract(basis),
+                         [[0, [0.9, 1]], [0, [0.5, 1]], [0, [0.3, 1]],
+                          [1, [0.9, 1]], [1, [0.5, 1]], [1, [0.3, 1]]])
+
+        basis = [[1, 0, [0.9, .7], [0.5, .7]], [1, [0.5, .8], [0.3, .6]], [1, [0.3, 1]]]
+        self.assertEqual(gto.uncontract(basis),
+                         [[1, [0.9, 1]], [1, [0.5, 1]], [1, [0.3, 1]]])
+
+        basis = [[1, -2, [0.9, .7], [0.5, .7]], [1, [0.5, .8], [0.3, .6]], [1, [0.3, 1]]]
+        self.assertEqual(gto.uncontract(basis),
+                         [[1, -2, [0.9, 1]], [1, -2, [0.5, 1]], [1, [0.3, 1]]])
+
+        # FIXME:
+        #basis = [[1, [0.9, .7], [0.5, .7]], [1, -2, [0.5, .8], [0.3, .6]], [1, [0.3, 1]]]
+        #serl.assertEqual(gto.uncontract(basis),
+        #                 [[1, [0.9, 1]], [1, [0.5, 1]], [1, [0.3, 1]]])
 
 if __name__ == "__main__":
     print("test mole.py")

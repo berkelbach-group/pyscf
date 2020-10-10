@@ -21,14 +21,15 @@
 #
 
 import time
-from functools import reduce
 import numpy
 from pyscf import lib
 from pyscf import symm
+from pyscf import scf
 from pyscf.tdscf import rhf
 from pyscf.scf import hf_symm
-from pyscf.scf import _response_functions
+from pyscf.scf import _response_functions  # noqa
 from pyscf.data import nist
+from pyscf.dft.rks import KohnShamDFT
 from pyscf import __config__
 
 # Low excitation filter to avoid numerical instability
@@ -71,8 +72,9 @@ class TDDFTNoHybrid(TDA):
             if isinstance(wfnsym, str):
                 wfnsym = symm.irrep_name2id(mol.groupname, wfnsym)
             wfnsym = wfnsym % 10  # convert to D2h subgroup
-            orbsym = hf_symm.get_orbsym(mol, mo_coeff) % 10
-            sym_forbid = (orbsym[occidx,None] ^ orbsym[viridx]) != wfnsym
+            orbsym = hf_symm.get_orbsym(mol, mo_coeff)
+            orbsym_in_d2h = numpy.asarray(orbsym) % 10  # convert to D2h irreps
+            sym_forbid = (orbsym_in_d2h[occidx,None] ^ orbsym_in_d2h[viridx]) != wfnsym
 
         e_ia = (mo_energy[viridx].reshape(-1,1) - mo_energy[occidx]).T
         if wfnsym is not None and mol.symmetry:
@@ -167,8 +169,6 @@ class TDDFTNoHybrid(TDA):
 
 class dRPA(TDDFTNoHybrid):
     def __init__(self, mf):
-        from pyscf import scf
-        from pyscf.dft.rks import KohnShamDFT
         if not isinstance(mf, KohnShamDFT):
             raise RuntimeError("direct RPA can only be applied with DFT; for HF+dRPA, use .xc='hf'")
         mf = scf.addons.convert_to_rhf(mf)
@@ -182,8 +182,6 @@ TDH = dRPA
 
 class dTDA(TDA):
     def __init__(self, mf):
-        from pyscf import scf
-        from pyscf.dft.rks import KohnShamDFT
         if not isinstance(mf, KohnShamDFT):
             raise RuntimeError("direct TDA can only be applied with DFT; for HF+dTDA, use .xc='hf'")
         mf = scf.addons.convert_to_rhf(mf)
@@ -218,7 +216,6 @@ dft.roks.ROKS.dRPA          = dft.rks_symm.ROKS.dRPA          = None
 
 if __name__ == '__main__':
     from pyscf import gto
-    from pyscf import scf
     from pyscf import dft
     mol = gto.Mole()
     mol.verbose = 0

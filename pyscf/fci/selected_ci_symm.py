@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2020 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -185,9 +185,10 @@ class SelectedCI(selected_ci.SelectedCI):
             strsa, strsb = getattr(fcivec, '_strs', self._strs)
             na, nb = strsa.size, strsb.size
 
+            orbsym_in_d2h = numpy.asarray(orbsym) % 10  # convert to D2h irreps
             airreps = numpy.zeros(na, dtype=numpy.int32)
             birreps = numpy.zeros(nb, dtype=numpy.int32)
-            for i, ir in enumerate(orbsym):
+            for i, ir in enumerate(orbsym_in_d2h):
                 airreps[numpy.bitwise_and(strsa, 1<<i) > 0] ^= ir
                 birreps[numpy.bitwise_and(strsb, 1<<i) > 0] ^= ir
 
@@ -240,7 +241,6 @@ if __name__ == '__main__':
     from functools import reduce
     from pyscf import gto
     from pyscf import scf
-    from pyscf import ao2mo
     from pyscf import symm
     from pyscf.fci import cistring
 

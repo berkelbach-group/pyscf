@@ -432,7 +432,7 @@ if 1:
                                                          os.path.join(pyscf_lib_dir, 'deps', 'lib'),
                                                          os.path.join(pyscf_lib_dir, 'deps', 'lib64')])
     xcfun_inc_path = search_inc_path('xcfun.h', [pyscf_lib_dir,
-                                                 os.path.join(pyscf_lib_dir, 'deps', 'include')])
+                                                 os.path.join(pyscf_lib_dir, 'deps', 'include', 'XCFun')])
     if xcfun_lib_path and xcfun_inc_path:
         print("****************************************************************")
         print("* xcfun found in %s." % xcfun_lib_path)
@@ -477,7 +477,7 @@ setup(
     author_email=AUTHOR_EMAIL,
     platforms=PLATFORMS,
     #package_dir={'pyscf': 'pyscf'},  # packages are under directory pyscf
-    #include *.so *.dat files. They are now placed in MAINTAINER.in
+    #include *.so *.dat files. They are now placed in MANIFEST.in
     #package_data={'': ['*.so', '*.dylib', '*.dll', '*.dat']},
     include_package_data=True,  # include everything in source control
     packages=find_packages(exclude=['*dmrgscf*', '*fciqmcscf*', '*icmpspt*',
@@ -487,9 +487,9 @@ setup(
     ext_modules=extensions,
     cmdclass={'build_ext': BuildExtWithoutPlatformSuffix,
               'install': PostInstallCommand},
-    install_requires=['numpy', 'scipy', 'h5py'],
+    install_requires=['numpy>1.8,!=1.16,!=1.17', 'scipy<1.5', 'h5py>2.2'],
     extras_require={
-        'geomopt': ['pyberny>=0.6.2', 'geometric'],
+        'geomopt': ['pyberny>=0.6.2', 'geometric>=0.9.7.2'],
     },
     setup_requires = ['numpy'],
 )

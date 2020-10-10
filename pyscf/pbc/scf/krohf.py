@@ -23,13 +23,13 @@ Restricted open-shell Hartree-Fock for periodic systems with k-point sampling
 from functools import reduce
 import numpy as np
 import scipy.linalg
+from pyscf.scf import hf as mol_hf
 from pyscf.pbc.scf import khf
 from pyscf.pbc.scf import kuhf
 from pyscf.pbc.scf import rohf as pbcrohf
 from pyscf import lib
 from pyscf.lib import logger
 from pyscf.pbc.scf import addons
-from pyscf.pbc.scf import chkfile
 from pyscf import __config__
 
 WITH_META_LOWDIN = getattr(__config__, 'pbc_scf_analyze_with_meta_lowdin', True)
@@ -42,7 +42,6 @@ def make_rdm1(mo_coeff_kpts, mo_occ_kpts, **kwargs):
     Returns:
         dm_kpts : (2, nkpts, nao, nao) ndarray
     '''
-    nkpts = len(mo_occ_kpts)
     dma = []
     dmb = []
     for k, occ in enumerate(mo_occ_kpts):
@@ -73,10 +72,12 @@ def get_fock(mf, h1e=None, s1e=None, vhf=None, dm=None, cycle=-1, diis=None,
     if dm_kpts is None: dm_kpts = mf.make_rdm1()
 
     dm_sf = dm_kpts[0] + dm_kpts[1]
+    if 0 <= cycle < diis_start_cycle-1 and abs(damp_factor) > 1e-4:
+        raise NotImplementedError('ROHF Fock-damping')
     if diis and cycle >= diis_start_cycle:
         f_kpts = diis.update(s_kpts, dm_sf, f_kpts, mf, h1e_kpts, vhf_kpts)
     if abs(level_shift_factor) > 1e-4:
-        f_kpts = [hf.level_shift(s, dm_sf[k]*.5, f_kpts[k], level_shift_factor)
+        f_kpts = [mol_hf.level_shift(s, dm_sf[k]*.5, f_kpts[k], level_shift_factor)
                   for k, s in enumerate(s_kpts)]
     f_kpts = lib.tag_array(lib.asarray(f_kpts), focka=focka, fockb=fockb)
     return f_kpts
@@ -167,12 +168,14 @@ def get_occ(mf, mo_energy_kpts=None, mo_coeff_kpts=None):
             vir_idx = mo_occ_kpts[k] == 0
             logger.debug(mf, '  kpt %2d (%6.3f %6.3f %6.3f)',
                          k, kpt[0], kpt[1], kpt[2])
-            logger.debug(mf, '  Highest 2-occ = %18.15g | %18.15g | %18.15g',
-                         max(mo_energy_kpts[k][core_idx]),
-                         max(mo_ea_kpts[k][core_idx]), max(mo_eb_kpts[k][core_idx]))
-            logger.debug(mf, '  Lowest 0-occ =  %18.15g | %18.15g | %18.15g',
-                         min(mo_energy_kpts[k][vir_idx]),
-                         min(mo_ea_kpts[k][vir_idx]), min(mo_eb_kpts[k][vir_idx]))
+            if np.count_nonzero(core_idx) > 0:
+                logger.debug(mf, '  Highest 2-occ = %18.15g | %18.15g | %18.15g',
+                             max(mo_energy_kpts[k][core_idx]),
+                             max(mo_ea_kpts[k][core_idx]), max(mo_eb_kpts[k][core_idx]))
+            if np.count_nonzero(vir_idx) > 0:
+                logger.debug(mf, '  Lowest 0-occ =  %18.15g | %18.15g | %18.15g',
+                             min(mo_energy_kpts[k][vir_idx]),
+                             min(mo_ea_kpts[k][vir_idx]), min(mo_eb_kpts[k][vir_idx]))
             for i in np.where(open_idx)[0]:
                 logger.debug(mf, '  1-occ =         %18.15g | %18.15g | %18.15g',
                              mo_energy_kpts[k][i], mo_ea_kpts[k][i], mo_eb_kpts[k][i])

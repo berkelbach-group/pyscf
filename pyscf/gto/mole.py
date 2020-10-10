@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2020 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,6 +48,9 @@ from pyscf.data.elements import ELEMENTS, ELEMENTS_PROTON, \
         _rm_digit, charge, _symbol, _std_symbol, _atom_symbol, is_ghost_atom, \
         _std_symbol_without_ghost
 
+from pyscf.lib.exceptions import BasisNotFoundError
+import warnings
+
 # For code compatibility in python-2 and python-3
 if sys.version_info >= (3,):
     unicode = str
@@ -70,7 +73,7 @@ PTR_EXP    = 5
 PTR_COEFF  = 6
 BAS_SLOTS  = 8
 # pointer to env
-PTR_LIGHT_SPEED = 0
+PTR_EXPCUTOFF   = 0
 PTR_COMMON_ORIG = 1
 PTR_RINV_ORIG   = 4
 PTR_RINV_ZETA   = 7
@@ -89,6 +92,7 @@ NUC_FRAC_CHARGE = 3
 NUC_ECP = 4  # atoms with pseudo potential
 
 BASE = getattr(__config__, 'BASE', 0)
+NORMALIZE_GTO = getattr(__config__, 'NORMALIZE_GTO', True)
 
 def M(**kwargs):
     r'''This is a shortcut to build up Mole object.
@@ -295,7 +299,8 @@ def format_atom(atoms, origin=0, axes=None,
             of the input atoms are the atomic unit;  If unit is one of strings
             (A, a, Angstrom, angstrom, Ang, ang), the coordinates are in the
             unit of angstrom;  If a number is given, the number are considered
-            as the Bohr value (in angstrom), which should be around 0.53
+            as the Bohr value (in angstrom), which should be around 0.53.
+            Set unit=1 if wishing to reserve the unit of the coordinates.
 
     Returns:
         "atoms" in the internal format. The internal format is
@@ -433,7 +438,7 @@ def format_basis(basis_tab):
         fmt_basis[symb] = bset
 
         if len(fmt_basis[symb]) == 0:
-            raise RuntimeError('Basis not found for  %s' % symb)
+            raise BasisNotFoundError('Basis not found for  %s' % symb)
     return fmt_basis
 
 def uncontracted_basis(_basis):
@@ -444,16 +449,39 @@ def uncontracted_basis(_basis):
     >>> gto.uncontract(gto.load('sto3g', 'He'))
     [[0, [6.36242139, 1]], [0, [1.158923, 1]], [0, [0.31364979, 1]]]
     '''
-    ubasis = []
+    MAXL = 10
+    ubasis_raw = [[] for l in range(MAXL)]
+    ubasis_exp = [[] for l in range(MAXL)]
     for b in _basis:
         angl = b[0]
-        if isinstance(b[1], int):
-            kappa = b[1]
-            for p in b[2:]:
-                ubasis.append([angl, kappa, [p[0], 1]])
+        kappa = b[1]
+        if isinstance(kappa, int):
+            coeffs = b[2:]
         else:
-            for p in b[1:]:
-                ubasis.append([angl, [p[0], 1]])
+            coeffs = b[1:]
+
+        if isinstance(kappa, int) and kappa != 0:
+            warnings.warn('For basis with kappa != 0, the uncontract basis might be wrong. '
+                          'Please double check the resultant attribute mol._basis')
+            for p in coeffs:
+                ubasis_raw[angl].append([angl, kappa, [p[0], 1]])
+                ubasis_exp[angl].append(p[0])
+        else:
+            for p in coeffs:
+                ubasis_raw[angl].append([angl, [p[0], 1]])
+                ubasis_exp[angl].append(p[0])
+
+    # Check linear dependency
+    ubasis = []
+    for l in range(MAXL):
+        basis_l = ubasis_raw[l]
+        if basis_l:
+            es = numpy.array(ubasis_exp[l])
+            # Remove duplicated primitive basis functions
+            es, e_idx = numpy.unique(es.round(9), True)
+            # from large exponent to small exponent
+            for i in reversed(e_idx):
+                ubasis.append(basis_l[i])
     return ubasis
 uncontract = uncontracted_basis
 contract = contracted_basis = basis.to_general_contraction
@@ -532,7 +560,7 @@ def format_ecp(ecp_tab):
             stdsymb = _std_symbol_without_ghost(symb)
             ecp_dat = basis.load_ecp(str(atom_ecp), stdsymb)
             if ecp_dat is None or len(ecp_dat) == 0:
-                #raise RuntimeError('ECP not found for  %s' % symb)
+                #raise BasisNotFoundError('ECP not found for  %s' % symb)
                 sys.stderr.write('ECP %s not found for  %s\n' %
                                  (atom_ecp, symb))
             else:
@@ -770,8 +798,9 @@ def make_bas_env(basis_add, atom_id=0, ptr=0):
         es = b_coeff[:,0]
         cs = b_coeff[:,1:]
         nprim, nctr = cs.shape
-        cs = numpy.einsum('pi,p->pi', cs, gto_norm(angl, es))
-        cs = _nomalize_contracted_ao(angl, es, cs)
+        if NORMALIZE_GTO:
+            cs = numpy.einsum('pi,p->pi', cs, gto_norm(angl, es))
+            cs = _nomalize_contracted_ao(angl, es, cs)
 
         _env.append(es)
         _env.append(cs.T.reshape(-1))
@@ -834,8 +863,6 @@ def make_env(atoms, basis, pre_env=[], nucmod={}, nucprop={}):
     _basdic = {}
     for symb, basis_add in basis.items():
         bas0, env0 = make_bas_env(basis_add, 0, ptr_env)
-        if bas0.size == 0:
-            sys.stderr.write('No basis found for atom %s\n' % symb)
         ptr_env = ptr_env + len(env0)
         _basdic[symb] = bas0
         _env.append(env0)
@@ -955,7 +982,7 @@ def tot_electrons(mol):
 
     if abs(nelectron - nelectron_int) > 1e-4:
         logger.warn(mol, 'Found fractional number of electrons %f. Round it to %d',
-                   nelectron, nelectron_int)
+                    nelectron, nelectron_int)
     return nelectron_int
 
 def copy(mol):
@@ -1015,7 +1042,8 @@ def dumps(mol):
 
     moldic = dict(mol.__dict__)
     for k in exclude_keys:
-        del(moldic[k])
+        if k in moldic:
+            del(moldic[k])
     for k in nparray_keys:
         if isinstance(moldic[k], numpy.ndarray):
             moldic[k] = moldic[k].tolist()
@@ -1026,7 +1054,6 @@ def dumps(mol):
     try:
         return json.dumps(moldic)
     except TypeError:
-        import warnings
         def skip_value(dic):
             dic1 = {}
             for k,v in dic.items():
@@ -1049,10 +1076,11 @@ def dumps(mol):
 def loads(molstr):
     '''Deserialize a str containing a JSON document to a Mole object.
     '''
-    from numpy import array  # for eval function
+    # the numpy function array is used by eval function
+    from numpy import array  # noqa
     moldic = json.loads(molstr)
     if sys.version_info < (3,):
-# Convert to utf8 because JSON loads fucntion returns unicode.
+        # Convert to utf8 because JSON loads fucntion returns unicode.
         def byteify(inp):
             if isinstance(inp, dict):
                 return dict([(byteify(k), byteify(v)) for k, v in inp.iteritems()])
@@ -1091,9 +1119,9 @@ def loads(molstr):
         # decompress symm_orb
         for val, x, y, shape in mol.symm_orb:
             if isinstance(val[0], list):
-# backward compatibility for chkfile of pyscf-1.4 in which val is an array of
-# real floats. In pyscf-1.5, val can be a list of list, to include the
-# imaginary part
+                # backward compatibility for chkfile of pyscf-1.4 in which val
+                # is an array of real floats. In pyscf-1.5, val can be a list
+                # of list, to include the imaginary part
                 val_real, val_imag = val
             else:
                 val_real, val_imag = val, None
@@ -1771,9 +1799,13 @@ def atom_mass_list(mol, isotope_avg=False):
             else:
                 prop = nucprop.get(stdsymb, {})
 
-            mass.append(nucprop.get('mass', mass_table[z]))
+            mass.append(prop.get('mass', mass_table[z]))
     else:
-        mass = [mass_table[z] for z in mol.atom_charges()]
+        #mass = [mass_table[z] for z in mol.atom_charges()]
+        mass = []
+        for ia in range(mol.natm):
+            z = charge(mol.atom_symbol(ia))
+            mass.append(mass_table[z])
 
     return numpy.array(mass)
 
@@ -1872,7 +1904,7 @@ def fromstring(string, format='xyz'):
         natm = int(dat[0])
         return '\n'.join(dat[2:natm+2])
     elif format == 'sdf':
-        raw = raw.splitlines()
+        raw = string.splitlines()
         natoms, nbonds = raw[3].split()[:2]
         atoms = []
         for line in raw[4:4+int(natoms)]:
@@ -2049,7 +2081,6 @@ class Mole(lib.StreamObject):
         self._atm = numpy.zeros((0,6), dtype=numpy.int32)
         self._bas = numpy.zeros((0,8), dtype=numpy.int32)
         self._env = numpy.zeros(PTR_ENV_START)
-        self._env[PTR_LIGHT_SPEED] = param.LIGHT_SPEED
         self._ecpbas = numpy.zeros((0,8), dtype=numpy.int32)
 
         self.stdout = sys.stdout
@@ -2061,6 +2092,8 @@ class Mole(lib.StreamObject):
         self._symm_orig = None
         self._symm_axes = None
         self._nelectron = None
+        self._nao = None
+        self._enuc = None
         self._atom = []
         self._basis = {}
         self._ecp = {}
@@ -2116,7 +2149,11 @@ class Mole(lib.StreamObject):
         return self.spin + 1
     @multiplicity.setter
     def multiplicity(self, x):
-        self.spin = x - 1
+        if x is None:
+            self.spin = None
+        else:
+            self.spin = x - 1
+
     @property
     def ms(self):
         '''Spin quantum number. multiplicity = ms*2+1'''
@@ -2126,7 +2163,10 @@ class Mole(lib.StreamObject):
             return self.spin * .5
     @ms.setter
     def ms(self, x):
-        self.spin = int(round(2*x, 4))
+        if x is None:
+            self.spin = None
+        else:
+            self.spin = int(round(2*x, 4))
 
     def __getattr__(self, key):
         '''To support accessing methods (mol.HF, mol.KS, mol.CCSD, mol.CASSCF, ...)
@@ -2135,14 +2175,14 @@ class Mole(lib.StreamObject):
         if key[:2] == '__':  # Skip Python builtins
             raise AttributeError('Mole object has no attribute %s' % key)
         elif key in ('_ipython_canary_method_should_not_exist_',
-                   '_repr_mimebundle_'):
+                     '_repr_mimebundle_'):
             # https://github.com/mewwts/addict/issues/26
             # https://github.com/jupyter/notebook/issues/2014
             raise AttributeError
 
         # Import all available modules. Some methods are registered to other
         # classes/modules when importing modules in __all__.
-        from pyscf import __all__
+        from pyscf import __all__  # noqa
         from pyscf import scf, dft
         for mod in (scf, dft):
             method = getattr(mod, key, None)
@@ -2194,6 +2234,14 @@ class Mole(lib.StreamObject):
     def loads_(self, molstr):
         self.__dict__.update(loads(molstr).__dict__)
         return self
+
+    def __getstate__(self):
+        exclude_keys = set(('stdout',))
+        d = dict(self.__dict__)
+        for k in exclude_keys:
+            if k in d:
+                del(d[k])
+        return d
 
     def build(self, dump_input=True, parse_arg=True,
               verbose=None, output=None, max_memory=None,
@@ -2323,39 +2371,7 @@ class Mole(lib.StreamObject):
             self.nelec
 
         if self.symmetry:
-            from pyscf import symm
-            self.topgroup, orig, axes = symm.detect_symm(self._atom, self._basis)
-
-            if isinstance(self.symmetry, (str, unicode)):
-                self.symmetry = str(symm.std_symb(self.symmetry))
-                self.groupname, axes = symm.subgroup(self.symmetry, axes)
-                prop_atoms = self.format_atom(self._atom, orig, axes, 'Bohr')
-                if symm.check_given_symm(self.groupname, prop_atoms, self._basis):
-                    self.topgroup = self.symmetry
-                else:
-                    raise RuntimeWarning('Unable to identify input symmetry %s.\n'
-                                         'Try symmetry="%s" with geometry (unit="Bohr")\n%s' %
-                                         (self.symmetry, self.topgroup,
-                                          '\n'.join([str(a) for a in prop_atoms])))
-            else:
-                self.groupname, axes = symm.as_subgroup(self.topgroup, axes,
-                                                        self.symmetry_subgroup)
-            self._symm_orig = orig
-            self._symm_axes = axes
-
-            if self.cart and self.groupname in ('Dooh', 'Coov'):
-                if self.groupname == 'Dooh':
-                    self.groupname, lgroup = 'D2h', 'Dooh'
-                else:
-                    self.groupname, lgroup = 'C2v', 'Coov'
-                logger.warn(self, 'This version does not support linear molecule '
-                            'symmetry %s for cartesian GTO basis.  Its subgroup '
-                            '%s is used', lgroup, self.groupname)
-
-            self.symm_orb, self.irrep_id = \
-                    symm.symm_adapted_basis(self, self.groupname, orig, axes)
-            self.irrep_name = [symm.irrep_id2name(self.groupname, ir)
-                               for ir in self.irrep_id]
+            self._build_symmetry()
 
         if dump_input and not self._built and self.verbose > logger.NOTE:
             self.dump_input()
@@ -2368,6 +2384,46 @@ class Mole(lib.StreamObject):
         self._built = True
         return self
     kernel = build
+
+    def _build_symmetry(self):
+        '''
+        Update symmetry related attributes: topgroup, groupname, _symm_orig,
+        _symm_axes, irrep_id, irrep_name, symm_orb
+        '''
+        from pyscf import symm
+        self.topgroup, orig, axes = symm.detect_symm(self._atom, self._basis)
+
+        if isinstance(self.symmetry, (str, unicode)):
+            self.symmetry = str(symm.std_symb(self.symmetry))
+            self.groupname, axes = symm.subgroup(self.symmetry, axes)
+            prop_atoms = self.format_atom(self._atom, orig, axes, 'Bohr')
+            if symm.check_given_symm(self.groupname, prop_atoms, self._basis):
+                self.topgroup = self.symmetry
+            else:
+                raise RuntimeWarning('Unable to identify input symmetry %s.\n'
+                                     'Try symmetry="%s" with geometry (unit="Bohr")\n%s' %
+                                     (self.symmetry, self.topgroup,
+                                      '\n'.join([str(a) for a in prop_atoms])))
+        else:
+            self.groupname, axes = symm.as_subgroup(self.topgroup, axes,
+                                                    self.symmetry_subgroup)
+        self._symm_orig = orig
+        self._symm_axes = axes
+
+        if self.cart and self.groupname in ('Dooh', 'Coov', 'SO3'):
+            if self.groupname == 'Coov':
+                self.groupname, lgroup = 'C2v', self.groupname
+            else:
+                self.groupname, lgroup = 'D2h', self.groupname
+            logger.warn(self, 'This version does not support symmetry %s '
+                        'for cartesian GTO basis. Its subgroup %s is used',
+                        lgroup, self.groupname)
+
+        self.symm_orb, self.irrep_id = \
+                symm.symm_adapted_basis(self, self.groupname, orig, axes)
+        self.irrep_name = [symm.irrep_id2name(self.groupname, ir)
+                           for ir in self.irrep_id]
+        return self
 
     @lib.with_doc(format_atom.__doc__)
     def format_atom(self, atom, origin=0, axes=None, unit='Ang'):
@@ -2494,8 +2550,8 @@ class Mole(lib.StreamObject):
         for ia,atom in enumerate(self._atom):
             coorda = tuple([x * param.BOHR for x in atom[1]])
             coordb = tuple([x for x in atom[1]])
-            self.stdout.write('[INPUT]%3d %-4s %16.12f %16.12f %16.12f AA  '\
-                              '%16.12f %16.12f %16.12f Bohr\n' \
+            self.stdout.write('[INPUT]%3d %-4s %16.12f %16.12f %16.12f AA  '
+                              '%16.12f %16.12f %16.12f Bohr\n'
                               % ((ia+1, _symbol(atom[0])) + coorda + coordb))
         if self.nucmod:
             if isinstance(self.nucmod, (int, str, unicode,
@@ -2511,11 +2567,11 @@ class Mole(lib.StreamObject):
 
         if self.verbose >= logger.DEBUG:
             self.stdout.write('[INPUT] ---------------- BASIS SET ---------------- \n')
-            self.stdout.write('[INPUT] l, kappa, [nprim/nctr], ' \
+            self.stdout.write('[INPUT] l, kappa, [nprim/nctr], '
                               'expnt,             c_1 c_2 ...\n')
-            for atom, basis in self._basis.items():
+            for atom, basis_set in self._basis.items():
                 self.stdout.write('[INPUT] %s\n' % atom)
-                for b in basis:
+                for b in basis_set:
                     if isinstance(b[1], int):
                         kappa = b[1]
                         b_coeff = b[2:]
@@ -2618,10 +2674,14 @@ class Mole(lib.StreamObject):
     with_rinv_orig = with_rinv_origin
 
     def set_range_coulomb(self, omega):
-        '''Apply the long range part of range-separated Coulomb operator for
-        **all** 2e integrals
-        erf(omega r12) / r12
-        set omega to 0 to siwtch off the range-separated Coulomb
+        '''Switch on range-separated Coulomb operator for **all** 2e integrals
+
+        Args:
+            omega : double
+
+                | = 0 : Regular electron repulsion integral
+                | > 0 : Long-range operator  erf(omega r12) / r12
+                | < 0 : Short-range operator  erfc(omega r12) /r12
         '''
         if omega is None:
             self._env[PTR_RANGE_OMEGA] = 0
@@ -2635,9 +2695,9 @@ class Mole(lib.StreamObject):
     omega = omega.setter(set_range_coulomb)
 
     def with_range_coulomb(self, omega):
-        '''Retuen a temporary mol context which has the required parameter
-        omega for long range part of range-separated Coulomb operator.
-        If omega = None, it will be treated as the regular Coulomb operator.
+        '''Retuen a temporary mol context which sets the required parameter
+        omega for range-separated Coulomb operator.
+        If omega = None, return the context for regular Coulomb integrals.
         See also :func:`mol.set_range_coulomb`
 
         Examples:
@@ -2648,8 +2708,20 @@ class Mole(lib.StreamObject):
         omega0 = self._env[PTR_RANGE_OMEGA].copy()
         return _TemporaryMoleContext(self.set_range_coulomb, (omega,), (omega0,))
 
+    def with_long_range_coulomb(self, omega):
+        '''Retuen a temporary mol context for long-range part of
+        range-separated Coulomb operator.
+        '''
+        return self.with_range_coulomb(abs(omega))
+
+    def with_short_range_coulomb(self, omega):
+        '''Retuen a temporary mol context for short-range part of
+        range-separated Coulomb operator.
+        '''
+        return self.with_range_coulomb(-abs(omega))
+
     def set_f12_zeta(self, zeta):
-        '''Set zeta for YP exp(-zeta r12)/r12 or STG exp(-zeta r12) type integrals  
+        '''Set zeta for YP exp(-zeta r12)/r12 or STG exp(-zeta r12) type integrals
         '''
         self._env[PTR_F12_ZETA] = zeta
 
@@ -2715,11 +2787,22 @@ class Mole(lib.StreamObject):
             self._env[AS_RINV_ORIG_ATOM] = atm_id  # required by ecp gradients
             rinv0 = self._env[PTR_RINV_ORIG:PTR_RINV_ORIG+3].copy()
             zeta0 = self._env[PTR_RINV_ZETA].copy()
+
             def set_rinv(z, r):
                 self._env[PTR_RINV_ZETA] = z
                 self._env[PTR_RINV_ORIG:PTR_RINV_ORIG+3] = r
             return _TemporaryMoleContext(set_rinv, (zeta,rinv), (zeta0,rinv0))
     with_rinv_as_nucleus = with_rinv_at_nucleus  # For backward compatibility
+
+    def with_integral_screen(self, threshold):
+        '''Retuen a temporary mol context which has the rquired integral
+        screen threshold
+        '''
+        expcutoff0 = self._env[PTR_EXPCUTOFF]
+        expcutoff = abs(numpy.log(threshold))
+        def set_cutoff(cut):
+            self._env[PTR_EXPCUTOFF] = cut
+        return _TemporaryMoleContext(set_cutoff, (expcutoff,), (expcutoff0,))
 
     def set_geom_(self, atoms_or_coords, unit=None, symmetry=None,
                   inplace=True):
@@ -3079,7 +3162,16 @@ class Mole(lib.StreamObject):
     ao_loc_nr = ao_loc_nr
     ao_loc_2c = ao_loc_2c
 
-    nao = property(nao_nr)
+    @property
+    def nao(self):
+        if self._nao is None:
+            return self.nao_nr()
+        else:
+            return self._nao
+    @nao.setter
+    def nao(self, x):
+        self._nao = x
+
     ao_loc = property(ao_loc_nr)
 
     tmap = time_reversal_map = time_reversal_map
@@ -3091,9 +3183,8 @@ class Mole(lib.StreamObject):
 
     def fromstring(self, string, format='xyz'):
         '''Update the Mole object based on the input geometry string'''
-        self.atom = string
-        self._atom = mol.format_atom(fromstring(string, format))
-        self.set_geom_(self, mol._atom, unit='Angstrom', inplace=True)
+        atom = self.format_atom(fromstring(string, format), unit=1)
+        self.set_geom_(atom, unit='Angstrom', inplace=True)
         if format == 'sdf' and 'M  CHG' in string:
             raise NotImplementedError
             #FIXME self.charge = 0
@@ -3101,9 +3192,10 @@ class Mole(lib.StreamObject):
 
     def fromfile(self, filename, format=None):
         '''Update the Mole object based on the input geometry file'''
-        self.atom = filename
-        self._atom = mol.format_atom(fromfile(filename, format))
-        self.set_geom_(self, mol._atom, unit='Angstrom', inplace=True)
+        atom = self.format_atom(fromfile(filename, format), unit=1)
+        self.set_geom_(atom, unit='Angstrom', inplace=True)
+        if format == 'sdf':
+            raise NotImplementedError
         return self
 
     def intor(self, intor, comp=None, hermi=0, aosym='s1', out=None,
@@ -3398,7 +3490,7 @@ def _update_from_cmdargs_(mol):
         __IPYTHON__
         #sys.stderr.write('Warn: Ipython shell catchs sys.args\n')
         return
-    except:
+    except Exception:
         pass
 
     if not mol._built: # parse cmdline args only once
@@ -3530,7 +3622,7 @@ def cart2zmat(coord):
             if abs(nb0) < 1e-7: # o0, o1, c in line
                 a2 = 0
                 zstr.append('%d %.15g %d %.15g %d %.15g' %
-                           (p0, nr0, p1, a1*180/numpy.pi, p2, a2))
+                            (p0, nr0, p1, a1*180/numpy.pi, p2, a2))
             else:
                 b1 = numpy.cross(o2-o0, r1)
                 nb1 = numpy.linalg.norm(b1)
@@ -3538,7 +3630,7 @@ def cart2zmat(coord):
                 if abs(nb1) < 1e-7:  # o0 o1 o2 in line
                     a2 = 0
                     zstr.append('%d %.15g %d %.15g %d %.15g' %
-                               (p0, nr0, p1, a1*180/numpy.pi, p2, a2))
+                                (p0, nr0, p1, a1*180/numpy.pi, p2, a2))
                     o2 = c
                     p2 = 4 + k
                 else:
@@ -3547,7 +3639,7 @@ def cart2zmat(coord):
                     else:
                         a2 =-numpy.arccos(numpy.dot(b1, b0) / (nb0*nb1))
                     zstr.append('%d %.15g %d %.15g %d %.15g' %
-                               (p0, nr0, p1, a1*180/numpy.pi, p2, a2*180/numpy.pi))
+                                (p0, nr0, p1, a1*180/numpy.pi, p2, a2*180/numpy.pi))
 
     return '\n'.join(zstr)
 
@@ -3558,8 +3650,8 @@ def dyall_nuc_mod(nuc_charge, nucprop={}):
     Ref. L. Visscher and K. Dyall, At. Data Nucl. Data Tables, 67, 207 (1997)
     '''
     mass = nucprop.get('mass', elements.ISOTOPE_MAIN[nuc_charge])
-    r = (0.836 * mass**(1./3) + 0.570) / 52917.7249;
-    zeta = 1.5 / (r**2);
+    r = (0.836 * mass**(1./3) + 0.570) / 52917.7249
+    zeta = 1.5 / (r**2)
     return zeta
 
 def filatov_nuc_mod(nuc_charge, nucprop={}):

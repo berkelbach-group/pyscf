@@ -43,7 +43,7 @@ def kernel(mp, mo_energy=None, mo_coeff=None, eris=None, with_t2=WITH_T2, verbos
 
     nocc = mp.nocc
     nvir = mp.nmo - nocc
-    moidx = mp.get_frozen_mask()
+    #moidx = mp.get_frozen_mask()
     eia = mo_energy[:nocc,None] - mo_energy[None,nocc:]
 
     if with_t2:
@@ -66,7 +66,7 @@ def energy(mp, t2, eris):
     eris_oovv = numpy.array(eris.oovv)
     e = 0.25*numpy.einsum('ijab,ijab', t2, eris_oovv)
     if abs(e.imag) > 1e-4:
-        logger.warn(cc, 'Non-zero imaginary part found in GMP2 energy %s', e)
+        logger.warn(mp, 'Non-zero imaginary part found in GMP2 energy %s', e)
     return e.real
 
 def update_amps(mp, t2, eris):
@@ -208,7 +208,6 @@ class GMP2(mp2.MP2):
 
 MP2 = GMP2
 
-from pyscf import scf
 scf.ghf.GHF.MP2 = lib.class_as_method(MP2)
 
 
@@ -250,7 +249,7 @@ class _PhysicistsERIs:
             self.fock = numpy.diag(self.mo_energy)
             self.e_hf = mp._scf.e_tot
         else:
-            dm = mp._scf.make_rdm1(mo_coeff, mp.mo_occ)
+            dm = mp._scf.make_rdm1(mp_mo_coeff, mp.mo_occ)
             vhf = mp._scf.get_veff(mp.mol, dm)
             fockao = mp._scf.get_fock(vhf=vhf, dm=dm)
             self.fock = self.mo_coeff.conj().T.dot(fockao).dot(self.mo_coeff)
@@ -269,7 +268,9 @@ def _make_eris_incore(mp, mo_coeff=None, ao2mofn=None, verbose=None):
     if callable(ao2mofn):
         orbo = eris.mo_coeff[:,:nocc]
         orbv = eris.mo_coeff[:,nocc:]
-        orbo = lib.tag_array(orbo, orbspin=orbspin)
+        if orbspin is not None:
+            orbo = lib.tag_array(orbo, orbspin=orbspin[:nocc])
+            orbv = lib.tag_array(orbv, orbspin=orbspin[nocc:])
         eri = ao2mofn((orbo,orbv,orbo,orbv)).reshape(nocc,nvir,nocc,nvir)
     else:
         orboa = eris.mo_coeff[:nao//2,:nocc]

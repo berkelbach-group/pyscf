@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2020 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ try:
   from scipy.special import factorial2
 except:
   from scipy.misc import factorial2
-from scipy.special import erf, erfc, erfcx
+from scipy.special import erf, erfc
 import scipy.optimize
 import pyscf.lib.parameters as param
 from pyscf import lib
@@ -36,7 +36,7 @@ from pyscf.lib import logger
 from pyscf.gto import mole
 from pyscf.gto import moleintor
 from pyscf.gto.mole import (_symbol, _rm_digit, _atom_symbol, _std_symbol,
-                            _std_symbol_without_ghost, charge, is_ghost_atom)
+                            _std_symbol_without_ghost, charge, is_ghost_atom) # noqa
 from pyscf.gto.mole import conc_env, uncontract
 from pyscf.pbc.gto import basis
 from pyscf.pbc.gto import pseudo
@@ -212,7 +212,8 @@ def dumps(cell):
 
     celldic = dict(cell.__dict__)
     for k in exclude_keys:
-        del(celldic[k])
+        if k in celldic:
+            del(celldic[k])
     for k in celldic:
         if isinstance(celldic[k], np.ndarray):
             celldic[k] = celldic[k].tolist()
@@ -246,7 +247,7 @@ def dumps(cell):
 def loads(cellstr):
     '''Deserialize a str containing a JSON document to a Cell object.
     '''
-    from numpy import array  # for eval function
+    from numpy import array  # noqa
     celldic = json.loads(cellstr)
     if sys.version_info < (3,):
 # Convert to utf8 because JSON loads fucntion returns unicode.
@@ -394,6 +395,39 @@ def intor_cross(intor, cell1, cell2, comp=None, hermi=0, kpts=None, kpt=None,
     Ls = cell1.get_lattice_Ls(rcut=max(cell1.rcut, cell2.rcut))
     expkL = np.asarray(np.exp(1j*np.dot(kpts_lst, Ls.T)), order='C')
     drv = libpbc.PBCnr2c_drv
+
+    kderiv = kwargs.get('kderiv', 0)
+    if kderiv > 0:
+        hermi = 0
+        aosym = 's1'
+        mat = np.empty((nkpts,(3**kderiv)*comp,ni,nj), dtype=np.complex128)
+        if kderiv == 1:
+            fac = 1j * lib.einsum('kl,lx->xkl', expkL, Ls)
+        elif kderiv == 2:
+            fac = -lib.einsum('kl,lx,ly->xykl', expkL, Ls, Ls).reshape(-1,nkpts,len(Ls))
+        else:
+            raise NotImplementedError
+
+        for x in range(fac.shape[0]):
+            facx = np.asarray(fac[x], order='C')
+            drv(fintor, fill, out.ctypes.data_as(ctypes.c_void_p),
+                ctypes.c_int(nkpts), ctypes.c_int(comp), ctypes.c_int(len(Ls)),
+                Ls.ctypes.data_as(ctypes.c_void_p),
+                facx.ctypes.data_as(ctypes.c_void_p),
+                (ctypes.c_int*4)(i0, i1, j0, j1),
+                ao_loc.ctypes.data_as(ctypes.c_void_p), cintopt, cpbcopt,
+                atm.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(pcell.natm),
+                bas.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(pcell.nbas),
+                env.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(env.size))
+
+            for k, kpt in enumerate(kpts_lst):
+                v = out[k]
+                if hermi != 0:
+                    for ic in range(comp):
+                        lib.hermi_triu(v[ic], hermi=hermi, inplace=True)
+                mat[k, x*comp:(x+1)*comp] = v.copy()
+        return mat
+
     drv(fintor, fill, out.ctypes.data_as(ctypes.c_void_p),
         ctypes.c_int(nkpts), ctypes.c_int(comp), ctypes.c_int(len(Ls)),
         Ls.ctypes.data_as(ctypes.c_void_p),
@@ -453,7 +487,7 @@ def bas_rcut(cell, bas_id, precision=INTEGRAL_PRECISION):
     r'''Estimate the largest distance between the function and its image to
     reach the precision in overlap
 
-    precision ~ \int g(r-0) g(r-R)
+    precision ~ \int g(r-0) g(r-Rcut)
     '''
     l = cell.bas_angular(bas_id)
     es = cell.bas_exp(bas_id)
@@ -501,7 +535,6 @@ def estimate_ke_cutoff(cell, precision=INTEGRAL_PRECISION):
     return Ecut_max
 
 def error_for_ke_cutoff(cell, ke_cutoff):
-    b = cell.reciprocal_vectors()
     kmax = np.sqrt(ke_cutoff*2)
     errmax = 0
     for i in range(cell.nbas):
@@ -1124,7 +1157,7 @@ class Cell(mole.Mole):
 
         # Import all available modules. Some methods are registered to other
         # classes/modules when importing modules in __all__.
-        from pyscf.pbc import __all__
+        from pyscf.pbc import __all__  # noqa
         from pyscf.pbc import scf, dft
         from pyscf.dft import XC
         for mod in (scf, dft):
@@ -1664,6 +1697,8 @@ class Cell(mole.Mole):
         mol = self.view(mole.Mole)
         delattr(mol, 'a')
         delattr(mol, '_mesh')
+        if mol.symmetry:
+            mol._build_symmetry()
         return mol
 
     def has_ecp(self):

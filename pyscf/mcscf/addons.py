@@ -17,7 +17,6 @@
 #
 
 import sys
-import copy
 from functools import reduce
 import numpy
 from pyscf import lib
@@ -70,6 +69,7 @@ def sort_mo(casscf, mo_coeff, caslst, base=BASE):
     -109.007378939813691
     '''
     ncore = casscf.ncore
+
     def ext_list(nmo, caslst):
         mask = numpy.ones(nmo, dtype=bool)
         mask[caslst] = False
@@ -124,7 +124,7 @@ def sort_mo(casscf, mo_coeff, caslst, base=BASE):
             mo_b = lib.tag_array(mo_b, orbsym=orbsymb)
         return (mo_a, mo_b)
 
-def select_mo_by_irrep(casscf,  cas_occ_num, mo = None, base=BASE):
+def select_mo_by_irrep(casscf,  cas_occ_num, mo=None, base=BASE):
     raise RuntimeError('This function has been replaced by function caslst_by_irrep')
 
 def caslst_by_irrep(casscf, mo_coeff, cas_irrep_nocc,
@@ -651,10 +651,11 @@ def state_average(casscf, weights=(0.5,0.5), wfnsym=None):
             return self.__class__.__bases__[0]
 
         def kernel(self, h1, h2, norb, nelec, ci0=None, **kwargs):
-# pass self to fcibase_class.kernel function because orbsym argument is stored in self
-# but undefined in fcibase object
             if 'nroots' not in kwargs:
                 kwargs['nroots'] = self.nroots
+
+            # call fcibase_class.kernel function because the attribute orbsym
+            # is available in self but undefined in fcibase object
             e, c = fcibase_class.kernel(self, h1, h2, norb, nelec, ci0,
                                         wfnsym=self.wfnsym, **kwargs)
             self.e_states = e
@@ -710,6 +711,7 @@ def state_average(casscf, weights=(0.5,0.5), wfnsym=None):
                 ss, multip = self.states_spin_square(ci0, norb, nelec, *args, **kwargs)
                 weights = self.weights
                 return numpy.dot(ss, weights), numpy.dot(multip, weights)
+
             def states_spin_square(self, ci0, norb, nelec, *args, **kwargs):
                 s = [fcibase_class.spin_square(self, ci0[i], norb, nelec, *args, **kwargs)
                      for i, wi in enumerate(self.weights)]
@@ -757,6 +759,7 @@ def _state_average_mcscf_solver(casscf, fcisolver):
         def weights (self):
             ''' I want these to be accessible but not separable from fcisolver.weights '''
             return self.fcisolver.weights
+
         @weights.setter
         def weights (self, x):
             self.fcisolver.weights = x
@@ -817,11 +820,13 @@ def state_specific_(casscf, state=1, wfnsym=None):
                         '    mc.state_specific_()\n' %
                         (casscf.fcisolver, fcibase_class.__base__.__module__,
                          fcibase_class.__base__.__name__))
+
     class FakeCISolver(fcibase_class, StateSpecificFCISolver):
         def __init__(self):
             self.nroots = state+1
             self._civec = None
             self.wfnsym = wfnsym
+
         def kernel(self, h1, h2, norb, nelec, ci0=None, **kwargs):
             if self._civec is not None:
                 ci0 = self._civec
@@ -841,6 +846,7 @@ def state_specific_(casscf, state=1, wfnsym=None):
                 else:
                     log.debug('state %d  E = %.15g', state, e[state])
             return e[state], c[state]
+
         def approx_kernel(self, h1, h2, norb, nelec, ci0=None, **kwargs):
             if self._civec is not None:
                 ci0 = self._civec
@@ -862,7 +868,9 @@ def state_specific_(casscf, state=1, wfnsym=None):
 
     fcisolver = FakeCISolver()
     fcisolver.__dict__.update(casscf.fcisolver.__dict__)
-    fcisolver.nroots = state+1
+    fcisolver.nroots = state + 1
+    if wfnsym is not None:
+        fcisolver.wfnsym = wfnsym
     casscf.fcisolver = fcisolver
     return casscf
 state_specific = state_specific_
@@ -890,12 +898,14 @@ def state_average_mix(casscf, fcisolvers, weights=(0.5,0.5)):
             else:
                 yield solver, ci0[p0:p0+solver.nroots]
             p0 += solver.nroots
+
     def loop_civecs(solvers, ci0):
         p0 = 0
         for solver in solvers:
             for i in range(p0, p0+solver.nroots):
                 yield solver, ci0[i]
             p0 += solver.nroots
+
     def get_nelec(solver, nelec):
         # FCISolver does not need this function. Some external solver may not
         # have the function to handle nelec and spin
@@ -903,6 +913,7 @@ def state_average_mix(casscf, fcisolvers, weights=(0.5,0.5)):
             nelec = numpy.sum(nelec)
             nelec = (nelec+solver.spin)//2, (nelec-solver.spin)//2
         return nelec
+
     def collect(fname, ci0, norb, nelec, *args, **kwargs):
         for solver, c in loop_civecs(fcisolvers, ci0):
             fn = getattr(solver, fname)
@@ -918,7 +929,7 @@ def state_average_mix(casscf, fcisolvers, weights=(0.5,0.5)):
             self._keys = self._keys.union (keys)
 
         def kernel(self, h1, h2, norb, nelec, ci0=None, verbose=0, **kwargs):
-# Note self.orbsym is initialized lazily in mc1step_symm.kernel function
+            # Note self.orbsym is initialized lazily in mc1step_symm.kernel function
             log = logger.new_logger(self, verbose)
             es = []
             cs = []
@@ -989,6 +1000,7 @@ def state_average_mix(casscf, fcisolvers, weights=(0.5,0.5)):
                 ss, multip = self.states_spin_square(ci0, norb, nelec, *args, **kwargs)
                 weights = self.weights
                 return numpy.dot(ss, weights), numpy.dot(multip, weights)
+
             def states_spin_square(self, ci0, norb, nelec, *args, **kwargs):
                 res = list(collect('spin_square', ci0, norb, nelec, *args, **kwargs))
                 ss = [x[0] for x in res]
@@ -1027,16 +1039,13 @@ del(BASE, MAP2HF_TOL)
 
 
 if __name__ == '__main__':
-    from pyscf import gto
     from pyscf import mcscf
     from pyscf.tools import ring
 
-    mol = gto.Mole()
-    mol.verbose = 0
-    mol.output = None
-    mol.atom = [['H', c] for c in ring.make(6, 1.2)]
-    mol.basis = '6-31g'
-    mol.build()
+    mol = gto.M(verbose=0,
+                output=None,
+                atom=[['H', c] for c in ring.make(6, 1.2)],
+                basis='6-31g')
 
     m = scf.RHF(mol)
     ehf = m.scf()
@@ -1094,9 +1103,3 @@ if __name__ == '__main__':
     mc = state_specific_(mc, 2)
     emc = mc.kernel()[0]
 
-
-    mc = mcscf.CASSCF(m, 4, 4)
-    mc.verbose = 4
-    hot_tuning_(mc, 'config1')
-    mc.kernel()
-    mc = None  # release for gc

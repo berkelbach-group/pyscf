@@ -161,7 +161,7 @@ def general(eri, mo_coeffs, erifile, dataname='eri_mo',
     log.debug('  Half transformed eri size (MB): {:.3g}'
               .format(nij_pair*nao_pair*typesize))
     log.debug('  RAM buffer (MB): {:.3g}'
-             .format(nij_pair*IOBLK_SIZE*typesize*2))
+              .format(nij_pair*IOBLK_SIZE*typesize*2))
 
     if eri_ao.size == nao_pair**2: # 4-fold symmetry
         # half_e1 first transforms the indices which are contiguous in memory
@@ -251,9 +251,6 @@ def general(eri, mo_coeffs, erifile, dataname='eri_mo',
     if isinstance(erifile, str):
         feri.close()
     return erifile
-
-def iden_coeffs(mo1, mo2):
-    return (id(mo1) == id(mo2)) or (mo1.shape==mo2.shape and numpy.allclose(mo1,mo2))
 
 if __name__ == '__main__':
     import tempfile

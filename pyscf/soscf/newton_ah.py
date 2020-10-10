@@ -22,19 +22,18 @@ Co-iterative augmented hessian second order SCF solver (CIAH-SOSCF)
 
 import sys
 import time
-import copy
 from functools import reduce
 import numpy
 import scipy.linalg
 from pyscf import lib
 from pyscf import gto
-from pyscf import symm
 from pyscf.lib import logger
 from pyscf.scf import chkfile
 from pyscf.scf import addons
 from pyscf.scf import hf_symm, uhf_symm, ghf_symm
 from pyscf.scf import hf, rohf, uhf
-from pyscf.scf import _response_functions
+# import _response_functions to load gen_response methods in SCF class
+from pyscf.scf import _response_functions  # noqa
 from pyscf.soscf import ciah
 from pyscf import __config__
 
@@ -279,6 +278,10 @@ def gen_g_hop_ghf(mf, mo_coeff, mo_occ, fock_ao=None, h1e=None,
 
     return g.reshape(-1), h_op, h_diag.reshape(-1)
 
+def gen_g_hop_dhf(mf, mo_coeff, mo_occ, fock_ao=None, h1e=None,
+                  with_symmetry=True):
+    return gen_g_hop_ghf(mf, mo_coeff, mo_occ, fock_ao, h1e, with_symmetry)
+
 
 # Dual basis for gradients and hessian
 def project_mol(mol, dual_basis={}):
@@ -326,7 +329,7 @@ def _rotate_orb_cc(mf, h1e, s1e, conv_tol_grad=None, verbose=None):
         return x
 
     t3m = (time.clock(), time.time())
-    u = g_kf = g_orb = kfcount = jkcount = None
+    u = g_kf = g_orb = norm_gorb = dxi = kfcount = jkcount = None
     dm0 = vhf0 = None
     g_op = lambda: g_orb
     while True:
@@ -681,8 +684,8 @@ class _CIAH_SOSCF(object):
         cput0 = (time.clock(), time.time())
         if dm0 is not None:
             if isinstance(dm0, str):
-                sys.stderr.write('Newton solver reads density matrix from chkfile %s\n' % dm)
-                dm0 = mf.from_chk(dm0)
+                sys.stderr.write('Newton solver reads density matrix from chkfile %s\n' % dm0)
+                dm0 = self.from_chk(dm0)
 
         elif mo_coeff is not None and mo_occ is None:
             logger.warn(self, 'Newton solver expects mo_coeff with '
@@ -869,8 +872,43 @@ def newton(mf):
                 return mo
         return SecondOrderGHF(mf)
 
-    elif isinstance(mf, scf.dhf.UHF):
-        raise RuntimeError('Not support Dirac-HF')
+    elif isinstance(mf, scf.dhf.RDHF):
+        class SecondOrderRDHF(_CIAH_SOSCF, mf.__class__):
+            __doc__ = mf_doc + _CIAH_SOSCF.__doc__
+
+            gen_g_hop = gen_g_hop_dhf
+
+            def update_rotate_matrix(self, dx, mo_occ, u0=1, mo_coeff=None):
+                nmo = mo_occ.size
+                nocc = numpy.count_nonzero(mo_occ)
+                nvir = nmo - nocc
+                dx = dx.reshape(nvir, nocc)
+                dx_aa = dx[::2,::2]
+                dr_aa = hf.unpack_uniq_var(dx_aa.ravel, mo_occ[::2])
+                u = numpy.zeros((nmo, nmo), dtype=dr_aa.dtype)
+                # Allows only the rotation within the up-up space and down-down space
+                u[::2,::2] = u[1::2,1::2] = expmat(dr_aa)
+                return numpy.dot(u0, u)
+
+            def rotate_mo(self, mo_coeff, u, log=None):
+                mo = numpy.dot(mo_coeff, u)
+                return mo
+        return SecondOrderRDHF(mf)
+
+    elif isinstance(mf, scf.dhf.DHF):
+        class SecondOrderDHF(_CIAH_SOSCF, mf.__class__):
+            __doc__ = mf_doc + _CIAH_SOSCF.__doc__
+
+            gen_g_hop = gen_g_hop_dhf
+
+            def update_rotate_matrix(self, dx, mo_occ, u0=1, mo_coeff=None):
+                dr = hf.unpack_uniq_var(dx, mo_occ)
+                return numpy.dot(u0, expmat(dr))
+
+            def rotate_mo(self, mo_coeff, u, log=None):
+                mo = numpy.dot(mo_coeff, u)
+                return mo
+        return SecondOrderDHF(mf)
 
     else:
         class SecondOrderRHF(_CIAH_SOSCF, mf.__class__):

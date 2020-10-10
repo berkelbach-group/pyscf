@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2020 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@
 '''Wave Function Stability Analysis
 
 Ref.
-JCP, 66, 3045
-JCP, 104, 9047
+JCP 66, 3045 (1977); DOI:10.1063/1.434318
+JCP 104, 9047 (1996); DOI:10.1063/1.471637
 
 See also tddft/rhf.py and scf/newton_ah.py
 '''
@@ -31,7 +31,7 @@ import scipy.linalg
 from pyscf import lib
 from pyscf.lib import logger
 from pyscf.pbc.scf import newton_ah
-from pyscf.pbc.scf import _response_functions
+from pyscf.pbc.scf import _response_functions  # noqa
 
 def rhf_stability(mf, internal=True, external=False, verbose=None):
     mo_i = mo_e = None
@@ -93,10 +93,8 @@ def _rotate_mo(mo_coeff, mo_occ, dx):
 def _gen_hop_rhf_external(mf, verbose=None):
 #FIXME: numerically unstable with small mesh?
 #TODO: Add a warning message for small mesh.
-    from pyscf.pbc.dft import numint
     from pyscf.pbc.scf.newton_ah import _unpack
     cell = mf.cell
-    kpts = mf.kpts
 
     mo_coeff = mf.mo_coeff
     mo_occ = mf.mo_occ

@@ -23,9 +23,7 @@ Extension to numpy and scipy
 import string
 import ctypes
 import math
-import re
 import numpy
-import scipy.linalg
 from pyscf.lib import misc
 from numpy import asarray  # For backward compatibility
 
@@ -298,7 +296,7 @@ def pack_tril(mat, axis=-1, out=None):
 
 # 1d -> 2d or 2d -> 3d, write hermitian lower triangle to upper triangle
 def unpack_tril(tril, filltriu=HERMITIAN, axis=-1, out=None):
-    '''Reverse operation of pack_tril.
+    '''Reversed operation of pack_tril.
 
     Kwargs:
         filltriu : int
@@ -972,7 +970,7 @@ def direct_sum(subscripts, *operands):
         sign = [x for x in subscript if x in '+-']
 
         symbs = subscript[1:].replace('-', '+').split('+')
-        s = ''.join(symbs)
+        #s = ''.join(symbs)
         #assert(len(set(s)) == len(s))  # make sure no duplicated symbols
         return sign, symbs
 

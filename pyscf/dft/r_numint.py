@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2020 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,11 +16,8 @@
 # Author: Qiming Sun <osirpt.sun@gmail.com>
 #
 
-import ctypes
 import numpy
-import scipy.linalg
 from pyscf import lib
-from pyscf.lib import logger
 from pyscf.dft import numint
 from pyscf.dft.numint import _dot_ao_dm, _dot_ao_ao, BLKSIZE
 
@@ -183,7 +180,8 @@ def r_vxc(ni, mol, grids, xc_code, dms, spin=0, relativity=0, hermi=1,
                 in ni.block_loop(mol, grids, nao, 0, with_s, max_memory):
             for idm in range(nset):
                 rho = make_rho(idm, ao, mask, xctype)
-                exc, vxc = ni.eval_xc(xc_code, rho, 1, relativity, 1,
+                exc, vxc = ni.eval_xc(xc_code, rho, spin=1,
+                                      relativity=relativity, deriv=1,
                                       verbose=verbose)[:2]
                 vrho = vxc[0]
                 den = rho[0] * weight
@@ -263,7 +261,7 @@ class RNumInt(numint.NumInt):
         if non0tab is None:
             non0tab = numpy.ones(((ngrids+BLKSIZE-1)//BLKSIZE,mol.nbas),
                                  dtype=numpy.uint8)
-        feval = 'GTOval_spinor_deriv%d' % deriv
+
         if buf is None:
             buf = numpy.empty((4,comp,blksize,nao), dtype=numpy.complex128)
         for ip0 in range(0, ngrids, blksize):
@@ -287,6 +285,7 @@ class RNumInt(numint.NumInt):
             c1 = .5 / lib.param.LIGHT_SPEED
             dmLL = dms[:,:n2c,:n2c].copy('C')
             dmSS = dms[:,n2c:,n2c:] * c1**2
+
             def make_rho(idm, ao, non0tab, xctype):
                 rho , m  = self.eval_rho(mol, ao[:2], dmLL[idm], non0tab, xctype)
                 rhoS, mS = self.eval_rho(mol, ao[2:], dmSS[idm], non0tab, xctype)
@@ -325,7 +324,6 @@ _RNumInt = RNumInt
 if __name__ == '__main__':
     import time
     from pyscf import gto
-    from pyscf import dft
     from pyscf.dft import dks
 
     mol = gto.M(

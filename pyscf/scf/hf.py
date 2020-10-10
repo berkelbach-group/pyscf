@@ -33,7 +33,7 @@ from pyscf.lib import logger
 from pyscf.scf import diis
 from pyscf.scf import _vhf
 from pyscf.scf import chkfile
-from pyscf.data import nist, elements
+from pyscf.data import nist
 from pyscf import __config__
 
 WITH_META_LOWDIN = getattr(__config__, 'scf_analyze_with_meta_lowdin', True)
@@ -462,9 +462,7 @@ def init_guess_by_atom(mol):
     Returns:
         Density matrix, 2D ndarray
     '''
-    import copy
     from pyscf.scf import atom_hf
-    from pyscf.scf import addons
     atm_scf = atom_hf.get_atm_nrhf(mol)
     aoslice = mol.aoslice_by_atom()
     atm_dms = []
@@ -499,7 +497,6 @@ def init_guess_by_huckel(mol):
     Returns:
         Density matrix, 2D ndarray
     '''
-    if mol is None: mol = self.mol
     mo_energy, mo_coeff = _init_guess_huckel_orbitals(mol)
     mo_occ = get_occ(SCF(mol), mo_energy, mo_coeff)
     return make_rdm1(mo_coeff, mo_occ)
@@ -511,9 +508,7 @@ def _init_guess_huckel_orbitals(mol):
     Returns:
         An 1D array for Huckel orbital energies and an 2D array for orbital coefficients
     '''
-    import copy
     from pyscf.scf import atom_hf
-    from pyscf.scf import addons
     atm_scf = atom_hf.get_atm_nrhf(mol)
 
     # GWH parameter value
@@ -894,7 +889,7 @@ def get_fock(mf, h1e=None, s1e=None, vhf=None, dm=None, cycle=-1, diis=None,
     if damp_factor is None:
         damp_factor = mf.damp
     if s1e is None: s1e = mf.get_ovlp()
-    if dm is None: dm = self.make_rdm1()
+    if dm is None: dm = mf.make_rdm1()
 
     if 0 <= cycle < diis_start_cycle-1 and abs(damp_factor) > 1e-4:
         f = damping(s1e, dm*.5, f, damp_factor)
@@ -1089,7 +1084,7 @@ def mulliken_meta(mol, dm, verbose=logger.DEBUG,
 
             | 'ano'   : Project GTOs to ANO basis
             | 'minao' : Project GTOs to MINAO basis
-            | 'scf'   : Fraction-averaged RHF
+            | 'scf'   : Symmetry-averaged fractional occupation atomic RHF
 
     Returns:
         A list : pop, charges
@@ -1251,7 +1246,6 @@ def as_scanner(mf):
     >>> hf_scanner(gto.M(atom='H 0 0 0; F 0 0 1.5'))
     -98.414750424294368
     '''
-    import copy
     if isinstance(mf, lib.SinglePointScanner):
         return mf
 
@@ -1491,7 +1485,7 @@ class SCF(lib.StreamObject):
     def eig(self, h, s):
 # An intermediate call to self._eigh so that the modification to eig function
 # can be applied on different level.  Different SCF modules like RHF/UHF
-# redifine only the eig solver and leave the other modifications (like removing
+# redefine only the eig solver and leave the other modifications (like removing
 # linear dependence, sorting eigenvlaue) to low level ._eigh
         return self._eigh(h, s)
 
@@ -1563,6 +1557,9 @@ class SCF(lib.StreamObject):
     from_chk.__doc__ = init_guess_by_chkfile.__doc__
 
     def get_init_guess(self, mol=None, key='minao'):
+        if not isinstance(key, (str, unicode)):
+            return key
+
         key = key.lower()
         if mol is None:
             mol = self.mol
@@ -1575,6 +1572,9 @@ class SCF(lib.StreamObject):
             dm = self.init_guess_by_1e(mol)
         elif key == 'atom':
             dm = self.init_guess_by_atom(mol)
+        elif key == 'vsap' and hasattr(self, 'init_guess_by_vsap'):
+            # Only available for DFT objects
+            dm = self.init_guess_by_vsap(mol)
         elif key[:3] == 'chk':
             try:
                 dm = self.init_guess_by_chkfile()
@@ -1605,7 +1605,7 @@ class SCF(lib.StreamObject):
     energy_tot = energy_tot
 
     def energy_nuc(self):
-        return gto.mole.energy_nuc(self.mol)
+        return self.mol.energy_nuc()
 
     # A hook for overloading convergence criteria in SCF iterations. Assigning
     # a function
@@ -1666,10 +1666,13 @@ class SCF(lib.StreamObject):
 
     def init_direct_scf(self, mol=None):
         if mol is None: mol = self.mol
-        opt = _vhf.VHFOpt(mol, 'int2e', 'CVHFnrs8_prescreen',
-                          'CVHFsetnr_direct_scf',
-                          'CVHFsetnr_direct_scf_dm')
-        opt.direct_scf_tol = self.direct_scf_tol
+        # Integrals < direct_scf_tol may be set to 0 in int2e.
+        # Higher accuracy is required for Schwartz inequality prescreening.
+        with mol.with_integral_screen(self.direct_scf_tol**2):
+            opt = _vhf.VHFOpt(mol, 'int2e', 'CVHFnrs8_prescreen',
+                              'CVHFsetnr_direct_scf',
+                              'CVHFsetnr_direct_scf_dm')
+            opt.direct_scf_tol = self.direct_scf_tol
         return opt
 
     @lib.with_doc(get_jk.__doc__)
